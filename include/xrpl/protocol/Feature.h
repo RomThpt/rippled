@@ -1,24 +1,5 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012, 2013 Ripple Labs Inc.
-
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
-#ifndef RIPPLE_PROTOCOL_FEATURE_H_INCLUDED
-#define RIPPLE_PROTOCOL_FEATURE_H_INCLUDED
+#ifndef XRPL_PROTOCOL_FEATURE_H_INCLUDED
+#define XRPL_PROTOCOL_FEATURE_H_INCLUDED
 
 #include <xrpl/basics/base_uint.h>
 
@@ -53,19 +34,19 @@
  *    then change the macro parameter in features.macro to
  *    `VoteBehavior::DefaultYes`. The communication process is beyond
  *    the scope of these instructions.
+
+ * 5) If a supported feature (`Supported::yes`) was _ever_ in a released
+ *     version, it can never be changed back to `Supported::no`, because
+ *     it _may_ still become enabled at any time. This would cause newer
+ *     versions of `rippled` to become amendment blocked.
+ *     Instead, to prevent newer versions from voting on the feature, use
+ *     `VoteBehavior::Obsolete`. Obsolete features can not be voted for
+ *     by any versions of `rippled` built with that setting, but will still
+ *     work correctly if they get enabled. If a feature remains obsolete
+ *     for long enough that _all_ clients that could vote for it are
+ *     amendment blocked, the feature can be removed from the code
+ *     as if it was unsupported.
  *
- * 5) A feature marked as Obsolete can mean either:
- *    1) It is in the ledger (marked as Supported::yes) and it is on its way to
- *      become Retired
- *    2) The feature is not in the ledger (has always been marked as
- *      Supported::no) and the code to support it has been removed
- *
- * If we want to discontinue a feature that we've never fully supported and
- * the feature has never been enabled, we should remove all the related
- * code, and mark the feature as "abandoned". To do this:
- *
- * 1) Open features.macro, move the feature to the abandoned section and
- *    change the macro to XRPL_ABANDON
  *
  * When a feature has been enabled for several years, the conditional code
  * may be removed, and the feature "retired". To retire a feature:
@@ -97,15 +78,15 @@ namespace detail {
 #undef XRPL_FEATURE
 #pragma push_macro("XRPL_FIX")
 #undef XRPL_FIX
-#pragma push_macro("XRPL_RETIRE")
-#undef XRPL_RETIRE
-#pragma push_macro("XRPL_ABANDON")
-#undef XRPL_ABANDON
+#pragma push_macro("XRPL_RETIRE_FEATURE")
+#undef XRPL_RETIRE_FEATURE
+#pragma push_macro("XRPL_RETIRE_FIX")
+#undef XRPL_RETIRE_FIX
 
 #define XRPL_FEATURE(name, supported, vote) +1
 #define XRPL_FIX(name, supported, vote) +1
-#define XRPL_RETIRE(name) +1
-#define XRPL_ABANDON(name) +1
+#define XRPL_RETIRE_FEATURE(name) +1
+#define XRPL_RETIRE_FIX(name) +1
 
 // This value SHOULD be equal to the number of amendments registered in
 // Feature.cpp. Because it's only used to reserve storage, and determine how
@@ -116,14 +97,14 @@ static constexpr std::size_t numFeatures =
 #include <xrpl/protocol/detail/features.macro>
     );
 
-#undef XRPL_RETIRE
-#pragma pop_macro("XRPL_RETIRE")
+#undef XRPL_RETIRE_FEATURE
+#pragma pop_macro("XRPL_RETIRE_FEATURE")
+#undef XRPL_RETIRE_FIX
+#pragma pop_macro("XRPL_RETIRE_FIX")
 #undef XRPL_FIX
 #pragma pop_macro("XRPL_FIX")
 #undef XRPL_FEATURE
 #pragma pop_macro("XRPL_FEATURE")
-#undef XRPL_ABANDON
-#pragma pop_macro("XRPL_ABANDON")
 
 /** Amendments that this server supports and the default voting behavior.
    Whether they are enabled depends on the Rules defined in the validated
@@ -363,26 +344,26 @@ foreachFeature(FeatureBitset bs, F&& f)
 #undef XRPL_FEATURE
 #pragma push_macro("XRPL_FIX")
 #undef XRPL_FIX
-#pragma push_macro("XRPL_RETIRE")
-#undef XRPL_RETIRE
-#pragma push_macro("XRPL_ABANDON")
-#undef XRPL_ABANDON
+#pragma push_macro("XRPL_RETIRE_FEATURE")
+#undef XRPL_RETIRE_FEATURE
+#pragma push_macro("XRPL_RETIRE_FIX")
+#undef XRPL_RETIRE_FIX
 
 #define XRPL_FEATURE(name, supported, vote) extern uint256 const feature##name;
 #define XRPL_FIX(name, supported, vote) extern uint256 const fix##name;
-#define XRPL_RETIRE(name)
-#define XRPL_ABANDON(name)
+#define XRPL_RETIRE_FEATURE(name)
+#define XRPL_RETIRE_FIX(name)
 
 #include <xrpl/protocol/detail/features.macro>
 
-#undef XRPL_RETIRE
-#pragma pop_macro("XRPL_RETIRE")
+#undef XRPL_RETIRE_FEATURE
+#pragma pop_macro("XRPL_RETIRE_FEATURE")
+#undef XRPL_RETIRE_FIX
+#pragma pop_macro("XRPL_RETIRE_FIX")
 #undef XRPL_FIX
 #pragma pop_macro("XRPL_FIX")
 #undef XRPL_FEATURE
 #pragma pop_macro("XRPL_FEATURE")
-#undef XRPL_ABANDON
-#pragma pop_macro("XRPL_ABANDON")
 
 }  // namespace ripple
 

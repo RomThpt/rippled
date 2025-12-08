@@ -1,22 +1,3 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2015 Ripple Labs Inc.
-
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
 #include <xrpld/app/misc/HashRouter.h>
 #include <xrpld/app/misc/NetworkOPs.h>
 #include <xrpld/app/misc/ValidatorList.h>
@@ -795,9 +776,7 @@ ValidatorList::sendValidatorList(
                     << " validator list collection(s) containing " << numVLs
                     << " validator list(s) for " << strHex(publisherKey)
                     << " with sequence range " << peerSequence << ", "
-                    << newPeerSequence << " to "
-                    << peer.getRemoteAddress().to_string() << " [" << peer.id()
-                    << "]";
+                    << newPeerSequence << " to " << peer.fingerprint();
             else
             {
                 XRPL_ASSERT(
@@ -807,8 +786,7 @@ ValidatorList::sendValidatorList(
                 JLOG(j.debug())
                     << "Sent validator list for " << strHex(publisherKey)
                     << " with sequence " << newPeerSequence << " to "
-                    << peer.getRemoteAddress().to_string() << " [" << peer.id()
-                    << "]";
+                    << peer.fingerprint();
             }
         }
     }
@@ -1149,20 +1127,34 @@ ValidatorList::applyList(
 
     Json::Value list;
     auto const& manifest = localManifest ? *localManifest : globalManifest;
-    auto [result, pubKeyOpt] = verify(lock, list, manifest, blob, signature);
+    auto m = deserializeManifest(base64_decode(manifest));
+    if (!m)
+    {
+        JLOG(j_.warn()) << "UNL manifest cannot be deserialized";
+        return PublisherListStats{ListDisposition::invalid};
+    }
+
+    auto [result, pubKeyOpt] =
+        verify(lock, list, std::move(*m), blob, signature);
 
     if (!pubKeyOpt)
     {
-        JLOG(j_.info()) << "ValidatorList::applyList unable to retrieve the "
-                           "master public key from the verify function\n";
+        JLOG(j_.warn())
+            << "UNL manifest is signed with an unrecognized master public key";
         return PublisherListStats{result};
     }
 
     if (!publicKeyType(*pubKeyOpt))
     {
-        JLOG(j_.info()) << "ValidatorList::applyList Invalid Public Key type"
-                           " retrieved from the verify function\n ";
+        // This is an impossible situation because we will never load an
+        // invalid public key type (see checks in `ValidatorList::load`) however
+        // we can only arrive here if the key used by the manifest matched one
+        // of the loaded keys
+        // LCOV_EXCL_START
+        UNREACHABLE(
+            "ripple::ValidatorList::applyList : invalid public key type");
         return PublisherListStats{result};
+        // LCOV_EXCL_STOP
     }
 
     PublicKey pubKey = *pubKeyOpt;
@@ -1356,19 +1348,17 @@ std::pair<ListDisposition, std::optional<PublicKey>>
 ValidatorList::verify(
     ValidatorList::lock_guard const& lock,
     Json::Value& list,
-    std::string const& manifest,
+    Manifest manifest,
     std::string const& blob,
     std::string const& signature)
 {
-    auto m = deserializeManifest(base64_decode(manifest));
-
-    if (!m || !publisherLists_.count(m->masterKey))
+    if (!publisherLists_.count(manifest.masterKey))
         return {ListDisposition::untrusted, {}};
 
-    PublicKey masterPubKey = m->masterKey;
-    auto const revoked = m->revoked();
+    PublicKey masterPubKey = manifest.masterKey;
+    auto const revoked = manifest.revoked();
 
-    auto const result = publisherManifests_.applyManifest(std::move(*m));
+    auto const result = publisherManifests_.applyManifest(std::move(manifest));
 
     if (revoked && result == ManifestDisposition::accepted)
     {
@@ -1796,7 +1786,7 @@ ValidatorList::getAvailable(
 
     if (!keyBlob || !publicKeyType(makeSlice(*keyBlob)))
     {
-        JLOG(j_.info()) << "Invalid requested validator list publisher key: "
+        JLOG(j_.warn()) << "Invalid requested validator list publisher key: "
                         << pubKey;
         return {};
     }

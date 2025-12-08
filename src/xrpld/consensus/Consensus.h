@@ -1,24 +1,5 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012-2017 Ripple Labs Inc.
-
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
-#ifndef RIPPLE_CONSENSUS_CONSENSUS_H_INCLUDED
-#define RIPPLE_CONSENSUS_CONSENSUS_H_INCLUDED
+#ifndef XRPL_CONSENSUS_CONSENSUS_H_INCLUDED
+#define XRPL_CONSENSUS_CONSENSUS_H_INCLUDED
 
 #include <xrpld/consensus/ConsensusParms.h>
 #include <xrpld/consensus/ConsensusProposal.h>
@@ -84,8 +65,8 @@ shouldCloseLedger(
                             agree
     @param stalled the network appears to be stalled, where
            neither we nor our peers have changed their vote on any disputes in a
-           while. This is undesirable, and will cause us to end consensus
-           without 80% agreement.
+           while. This is undesirable, and should be rare, and will cause us to
+           end consensus without 80% agreement.
     @param parms            Consensus constant parameters
     @param proposing        whether we should count ourselves
     @param j                journal for logging
@@ -1712,15 +1693,29 @@ Consensus<Adaptor>::haveConsensus(
                      << ", disagree=" << disagree;
 
     ConsensusParms const& parms = adaptor_.parms();
-    // Stalling is BAD
+    // Stalling is BAD. It means that we have a consensus on the close time, so
+    // peers are talking, but we have disputed transactions that peers are
+    // unable or unwilling to come to agreement on one way or the other.
     bool const stalled = haveCloseTimeConsensus_ &&
+        !result_->disputes.empty() &&
         std::ranges::all_of(result_->disputes,
-                            [this, &parms](auto const& dispute) {
+                            [this, &parms, &clog](auto const& dispute) {
                                 return dispute.second.stalled(
                                     parms,
                                     mode_.get() == ConsensusMode::proposing,
-                                    peerUnchangedCounter_);
+                                    peerUnchangedCounter_,
+                                    j_,
+                                    clog);
                             });
+    if (stalled)
+    {
+        std::stringstream ss;
+        ss << "Consensus detects as stalled with " << (agree + disagree) << "/"
+           << prevProposers_ << " proposers, and " << result_->disputes.size()
+           << " stalled disputed transactions.";
+        JLOG(j_.error()) << ss.str();
+        CLOG(clog) << ss.str();
+    }
 
     // Determine if we actually have consensus or not
     result_->state = checkConsensus(

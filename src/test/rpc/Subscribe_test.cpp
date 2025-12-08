@@ -1,20 +1,3 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012, 2013 Ripple Labs Inc.
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
 #include <test/jtx.h>
 #include <test/jtx/WSClient.h>
 #include <test/jtx/envconfig.h>
@@ -131,6 +114,9 @@ public:
                 BEAST_EXPECT(jv.isMember(jss::id) && jv[jss::id] == 5);
             }
             BEAST_EXPECT(jv[jss::result][jss::ledger_index] == 2);
+            BEAST_EXPECT(
+                jv[jss::result][jss::network_id] ==
+                env.app().config().NETWORK_ID);
         }
 
         {
@@ -139,7 +125,8 @@ public:
 
             // Check stream update
             BEAST_EXPECT(wsc->findMsg(5s, [&](auto const& jv) {
-                return jv[jss::ledger_index] == 3;
+                return jv[jss::ledger_index] == 3 &&
+                    jv[jss::network_id] == env.app().config().NETWORK_ID;
             }));
         }
 
@@ -149,7 +136,8 @@ public:
 
             // Check stream update
             BEAST_EXPECT(wsc->findMsg(5s, [&](auto const& jv) {
-                return jv[jss::ledger_index] == 4;
+                return jv[jss::ledger_index] == 4 &&
+                    jv[jss::network_id] == env.app().config().NETWORK_ID;
             }));
         }
 
@@ -509,6 +497,11 @@ public:
                 if (!jv.isMember(jss::validated_hash))
                     return false;
 
+                uint32_t netID = env.app().config().NETWORK_ID;
+                if (!jv.isMember(jss::network_id) ||
+                    jv[jss::network_id] != netID)
+                    return false;
+
                 // Certain fields are only added on a flag ledger.
                 bool const isFlagLedger =
                     (env.closed()->info().seq + 1) % 256 == 0;
@@ -567,6 +560,7 @@ public:
         jv[jss::streams][0u] = "ledger";
         jr = env.rpc("json", "subscribe", to_string(jv))[jss::result];
         BEAST_EXPECT(jr[jss::status] == "success");
+        BEAST_EXPECT(jr[jss::network_id] == env.app().config().NETWORK_ID);
 
         jr = env.rpc("json", "unsubscribe", to_string(jv))[jss::result];
         BEAST_EXPECT(jr[jss::status] == "success");
@@ -1597,7 +1591,7 @@ public:
     }
 };
 
-BEAST_DEFINE_TESTSUITE(Subscribe, app, ripple);
+BEAST_DEFINE_TESTSUITE(Subscribe, rpc, ripple);
 
 }  // namespace test
 }  // namespace ripple

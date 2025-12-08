@@ -1,29 +1,10 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012, 2013 Ripple Labs Inc.
-
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2011 The Bitcoin developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file license.txt or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef RIPPLE_BASICS_BASE_UINT_H_INCLUDED
-#define RIPPLE_BASICS_BASE_UINT_H_INCLUDED
+#ifndef XRPL_BASICS_BASE_UINT_H_INCLUDED
+#define XRPL_BASICS_BASE_UINT_H_INCLUDED
 
 #include <xrpl/basics/Expected.h>
 #include <xrpl/basics/Slice.h>
@@ -565,7 +546,7 @@ operator<=>(base_uint<Bits, Tag> const& lhs, base_uint<Bits, Tag> const& rhs)
     // This comparison might seem wrong on a casual inspection because it
     // compares data internally stored as std::uint32_t byte-by-byte. But
     // note that the underlying data is stored in big endian, even if the
-    // plaform is little endian. This makes the comparison correct.
+    // platform is little endian. This makes the comparison correct.
     //
     // FIXME: use std::lexicographical_compare_three_way once support is
     //        added to MacOS.
@@ -630,6 +611,16 @@ inline std::string
 to_string(base_uint<Bits, Tag> const& a)
 {
     return strHex(a.cbegin(), a.cend());
+}
+
+template <std::size_t Bits, class Tag>
+inline std::string
+to_short_string(base_uint<Bits, Tag> const& a)
+{
+    static_assert(
+        base_uint<Bits, Tag>::bytes > 4,
+        "For 4 bytes or less, use a native type");
+    return strHex(a.cbegin(), a.cbegin() + 4) + "...";
 }
 
 template <std::size_t Bits, class Tag>

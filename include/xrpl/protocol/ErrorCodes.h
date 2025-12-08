@@ -1,24 +1,5 @@
-//------------------------------------------------------------------------------
-/*
-    This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012 - 2019 Ripple Labs Inc.
-
-    Permission to use, copy, modify, and/or distribute this software for any
-    purpose  with  or without fee is hereby granted, provided that the above
-    copyright notice and this permission notice appear in all copies.
-
-    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
-    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-    ANY  SPECIAL ,  DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
-    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-*/
-//==============================================================================
-
-#ifndef RIPPLE_PROTOCOL_ERRORCODES_H_INCLUDED
-#define RIPPLE_PROTOCOL_ERRORCODES_H_INCLUDED
+#ifndef XRPL_PROTOCOL_ERRORCODES_H_INCLUDED
+#define XRPL_PROTOCOL_ERRORCODES_H_INCLUDED
 
 #include <xrpl/json/json_value.h>
 #include <xrpl/protocol/jss.h>
@@ -157,7 +138,12 @@ enum error_code_i {
     // Pathfinding
     rpcDOMAIN_MALFORMED = 97,
 
-    rpcLAST = rpcDOMAIN_MALFORMED  // rpcLAST should always equal the last code.
+    // ledger_entry
+    rpcENTRY_NOT_FOUND = 98,
+    rpcUNEXPECTED_LEDGER_TYPE = 99,
+
+    rpcLAST =
+        rpcUNEXPECTED_LEDGER_TYPE  // rpcLAST should always equal the last code.
 };
 
 /** Codes returned in the `warnings` array of certain RPC commands.
@@ -169,6 +155,8 @@ enum warning_code_i {
     warnRPC_AMENDMENT_BLOCKED = 1002,
     warnRPC_EXPIRED_VALIDATOR_LIST = 1003,
     // unused = 1004
+    warnRPC_FIELDS_DEPRECATED = 2004,  // rippled needs to maintain
+                                       // compatibility with Clio on this code.
 };
 
 //------------------------------------------------------------------------------
