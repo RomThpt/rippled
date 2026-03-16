@@ -241,8 +241,8 @@ ValidCLAMM::finalizeWithdraw(
     ReadView const& view,
     beast::Journal const& j) const
 {
-    // Pool must be modified (always updated with PreviousTxnID)
-    if (!clammModified_)
+    // Pool must be modified or deleted (auto-delete on last withdrawal)
+    if (!clammModified_ && !clammDeleted_)
     {
         JLOG(j.fatal())
             << "Invariant failed: CLAMMWithdraw did not modify pool";

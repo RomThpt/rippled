@@ -1,6 +1,7 @@
 #include <test/jtx.h>
 #include <test/jtx/CLAMM.h>
 #include <test/jtx/Env.h>
+#include <test/jtx/acctdelete.h>
 #include <test/jtx/token.h>
 
 #include <xrpl/protocol/CLAMMCore.h>
@@ -3922,6 +3923,9 @@ struct CLAMM_test : public beast::unit_test::suite
         testcase("CLAMMDelete Empty Pool");
         using namespace jtx;
 
+        // Scenario: bob deposits, bob withdraws, then CLAMMDelete.
+        // Since bob is NOT the creator (alice is), auto-delete won't
+        // trigger, so explicit CLAMMDelete is needed.
         auto const features =
             jtx::testable_amendments() | featureCLAMM;
         Env env{*this, features};
@@ -3930,34 +3934,34 @@ struct CLAMM_test : public beast::unit_test::suite
         auto const pid =
             clammPoolID(xrpIssue(), USD.issue(), 1);
 
-        // Create pool
+        // Alice creates pool
         env(clammCreate(env,
                 alice, xrpIssue(), USD.issue(), 1,
                 clammDefaultSqrtPrice()),
             ter(tesSUCCESS));
         env.close();
 
-        // Deposit
+        // Bob deposits
         env(clammDeposit(
-                alice, pid, -100, 100, XRP(1000), USD(1000)),
+                bob, pid, -100, 100, XRP(1000), USD(1000)),
             ter(tesSUCCESS));
         env.close();
 
-        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        auto const nftID = clammFindPositionNFT(env, bob, pid);
         BEAST_EXPECT(nftID.has_value());
         if (!nftID)
             return;
 
-        // Full withdraw
-        env(clammWithdraw(alice, *nftID),
+        // Bob full withdraws (not creator, pool not auto-deleted)
+        env(clammWithdraw(bob, *nftID),
             ter(tesSUCCESS));
         env.close();
 
-        // Pool exists but is empty
+        // Pool should still exist (bob is not creator)
         BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
 
-        // Delete pool
-        env(clammDelete(bob, xrpIssue(), USD.issue(), 1),
+        // Delete pool explicitly
+        env(clammDelete(carol, xrpIssue(), USD.issue(), 1),
             ter(tesSUCCESS));
         env.close();
 
@@ -4172,6 +4176,118 @@ struct CLAMM_test : public beast::unit_test::suite
     }
 
     void
+    testWithdrawAutoDeletesEmptyPool()
+    {
+        testcase("Withdraw auto-deletes empty pool when creator withdraws");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        // Alice creates pool and deposits
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+        if (!nftID)
+            return;
+
+        // Pool exists
+        BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
+
+        // Alice full withdraws (is creator) -> auto-delete
+        env(clammWithdraw(alice, *nftID),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Pool should be auto-deleted
+        BEAST_EXPECT(!env.current()->read(keylet::clamm(pid)));
+
+        // Position should be gone
+        BEAST_EXPECT(
+            !env.current()->read(keylet::clammPosition(*nftID)));
+    }
+
+    void
+    testAccountDeletionBlocker()
+    {
+        testcase("Account deletion blocked by CLAMM objects");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        // Alice creates pool
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Advance ledgers so AccountDelete is not blocked by TOO_SOON
+        incLgrSeqForAccDel(env, alice);
+
+        // Alice cannot delete her account (has CLAMM pool in directory)
+        env(acctdelete(alice, bob),
+            fee(drops(env.current()->fees().increment)),
+            ter(tecHAS_OBLIGATIONS));
+        env.close();
+    }
+
+    void
+    testDeletionBlockersRPC()
+    {
+        testcase("RPC deletion_blockers_only returns CLAMM objects");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Query account_objects with deletion_blockers_only
+        Json::Value params;
+        params[jss::account] = alice.human();
+        params[jss::deletion_blockers_only] = true;
+        auto const result = env.rpc(
+            "json", "account_objects", to_string(params));
+        auto const& objects =
+            result[jss::result][jss::account_objects];
+        BEAST_EXPECT(objects.isArray());
+
+        // Should find the CLAMM pool as a deletion blocker
+        bool foundCLAMM = false;
+        for (auto const& obj : objects)
+        {
+            if (obj["LedgerEntryType"].asString() == "CLAMM")
+                foundCLAMM = true;
+        }
+        BEAST_EXPECT(foundCLAMM);
+    }
+
+    void
     run() override
     {
         testCreate();
@@ -4229,6 +4345,9 @@ struct CLAMM_test : public beast::unit_test::suite
         testDeleteNonEmptyPool();
         testNFTokenTransferUpdatesPosition();
         testNFTokenTransferBrokered();
+        testWithdrawAutoDeletesEmptyPool();
+        testAccountDeletionBlocker();
+        testDeletionBlockersRPC();
     }
 };
 

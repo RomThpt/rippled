@@ -322,9 +322,93 @@ CLAMMWithdraw::doApply()
         sb.update(slePos);
     }
 
-    sleClamm->setFieldH256(sfPreviousTxnID, ctx_.tx.getTransactionID());
-    sleClamm->setFieldU32(sfPreviousTxnLgrSeq, ctx_.view().seq());
-    sb.update(sleClamm);
+    // Auto-delete pool if empty after full withdrawal.
+    // Pattern: similar to AMMWithdraw::deleteAMMAccountIfEmpty().
+    // Pool is empty when active liquidity is zero and the pool
+    // pseudo-account's directory has no remaining ticks or bitmaps
+    // (only zero-balance trust lines may remain).
+    bool poolDeleted = false;
+    if (fullWithdrawal && !sleClamm->isFieldPresent(sfLiquidityAmount))
+    {
+        auto const poolDirKeylet = keylet::ownerDir(ammAccountID);
+
+        // Delete zero-balance trust lines in the pool directory.
+        // Skip any ticks or bitmaps (indicate pool is NOT empty).
+        bool hasNonTrustEntries = false;
+        auto const delTer = cleanupOnAccountDelete(
+            sb,
+            poolDirKeylet,
+            [&](LedgerEntryType nodeType,
+                uint256 const&,
+                std::shared_ptr<SLE>& sleItem)
+                -> std::pair<TER, SkipEntry> {
+                if (nodeType == ltCLAMM_TICK ||
+                    nodeType == ltCLAMM_TICK_BITMAP)
+                {
+                    hasNonTrustEntries = true;
+                    return {tesSUCCESS, SkipEntry::Yes};
+                }
+                if (nodeType == ltRIPPLE_STATE)
+                {
+                    if (sleItem->getFieldAmount(sfBalance) != beast::zero)
+                    {
+                        hasNonTrustEntries = true;
+                        return {tesSUCCESS, SkipEntry::Yes};
+                    }
+                    return {
+                        deleteAMMTrustLine(
+                            sb, sleItem, ammAccountID, j_),
+                        SkipEntry::No};
+                }
+                return {tesSUCCESS, SkipEntry::Yes};
+            },
+            j_,
+            512);
+
+        if (!hasNonTrustEntries && delTer == tesSUCCESS &&
+            dirIsEmpty(sb, poolDirKeylet))
+        {
+            // Pool directory is empty. Try to delete the pool.
+            // sfOwnerNode stores the page in the creator's directory.
+            // Only proceed if withdrawer is the creator (dirRemove
+            // succeeds). Otherwise leave for explicit CLAMMDelete.
+            auto const clammOwnerNode =
+                sleClamm->getFieldU64(sfOwnerNode);
+
+            if (sb.dirRemove(
+                    keylet::ownerDir(account),
+                    clammOwnerNode,
+                    clammKeylet,
+                    false))
+            {
+                if (sb.exists(poolDirKeylet))
+                    sb.emptyDirDelete(poolDirKeylet);
+
+                auto sleAMMRoot =
+                    sb.peek(keylet::account(ammAccountID));
+                sb.erase(sleClamm);
+                if (sleAMMRoot)
+                    sb.erase(sleAMMRoot);
+
+                adjustOwnerCount(
+                    sb,
+                    sb.peek(keylet::account(account)),
+                    -1,
+                    j_);
+
+                poolDeleted = true;
+            }
+        }
+    }
+
+    if (!poolDeleted)
+    {
+        sleClamm->setFieldH256(
+            sfPreviousTxnID, ctx_.tx.getTransactionID());
+        sleClamm->setFieldU32(
+            sfPreviousTxnLgrSeq, ctx_.view().seq());
+        sb.update(sleClamm);
+    }
 
     sb.apply(ctx_.rawView());
     return tesSUCCESS;
