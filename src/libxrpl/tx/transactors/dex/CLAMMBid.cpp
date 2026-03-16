@@ -7,6 +7,7 @@
 #include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/TxFlags.h>
 #include <xrpl/tx/transactors/dex/CLAMMBid.h>
+#include <xrpl/tx/transactors/dex/CLAMMHelpers.h>
 
 #include <chrono>
 #include <cmath>
@@ -101,10 +102,9 @@ CLAMMBid::preflight(PreflightContext const& ctx)
 TER
 CLAMMBid::preclaim(PreclaimContext const& ctx)
 {
-    if (ctx.tx.isFieldPresent(sfPoolID))
+    if (auto const poolID = resolvePoolID(ctx.tx))
     {
-        auto const sleClamm =
-            ctx.view.read(keylet::clamm(ctx.tx.getFieldH256(sfPoolID)));
+        auto const sleClamm = ctx.view.read(keylet::clamm(*poolID));
         if (!sleClamm)
         {
             JLOG(ctx.j.debug()) << "CLAMM Bid: pool not found.";
@@ -151,7 +151,13 @@ TER
 CLAMMBid::doApply()
 {
     auto const account = ctx_.tx[sfAccount];
-    auto const poolID = ctx_.tx.getFieldH256(sfPoolID);
+    auto const optPoolID = resolvePoolID(ctx_.tx);
+    if (!optPoolID)
+    {
+        JLOG(j_.debug()) << "CLAMM Bid: no pool identifier provided.";
+        return temMALFORMED;
+    }
+    auto const poolID = *optPoolID;
 
     Sandbox sb(&ctx_.view());
 

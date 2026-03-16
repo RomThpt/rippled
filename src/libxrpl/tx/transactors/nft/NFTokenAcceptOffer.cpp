@@ -1,5 +1,7 @@
 #include <xrpl/ledger/View.h>
+#include <xrpl/protocol/CLAMMCore.h>
 #include <xrpl/protocol/Feature.h>
+#include <xrpl/protocol/Indexes.h>
 #include <xrpl/protocol/Rate.h>
 #include <xrpl/protocol/TxFlags.h>
 #include <xrpl/tx/transactors/nft/NFTokenAcceptOffer.h>
@@ -374,6 +376,41 @@ NFTokenAcceptOffer::transferNFToken(
             if (auto const reserve = view().fees().accountReserve(buyerOwnerCountAfter);
                 buyerBalance < reserve)
                 return tecINSUFFICIENT_RESERVE;
+        }
+    }
+
+    // If CLAMM is enabled and this NFToken represents a CLAMM position,
+    // update the CLAMMPosition SLE to reflect the new owner.
+    if (view().rules().enabled(featureCLAMM) &&
+        nft::getTaxon(nftokenID) == nft::toTaxon(CLAMM_NFTOKEN_TAXON))
+    {
+        auto const posKeylet = keylet::clammPosition(nftokenID);
+        if (auto slePos = view().peek(posKeylet))
+        {
+            // Remove position from seller's owner directory
+            auto const sellerOwnerNode = slePos->getFieldU64(sfOwnerNode);
+            if (!view().dirRemove(
+                    keylet::ownerDir(seller),
+                    sellerOwnerNode,
+                    posKeylet,
+                    true))
+            {
+                JLOG(j_.debug())
+                    << "NFTokenAcceptOffer: CLAMM dir remove from seller failed.";
+                return tefBAD_LEDGER;
+            }
+
+            // Insert position into buyer's owner directory
+            auto const buyerPage = view().dirInsert(
+                keylet::ownerDir(buyer),
+                posKeylet,
+                describeOwnerDir(buyer));
+            if (!buyerPage)
+                return tecDIR_FULL;
+
+            slePos->setAccountID(sfOwner, buyer);
+            slePos->setFieldU64(sfOwnerNode, *buyerPage);
+            view().update(slePos);
         }
     }
 

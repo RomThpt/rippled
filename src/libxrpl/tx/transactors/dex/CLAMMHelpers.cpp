@@ -1033,4 +1033,24 @@ computeFeeGrowthInside(
 }
 
 }  // namespace clamm
+
+std::optional<uint256>
+resolvePoolID(STTx const& tx)
+{
+    if (tx.isFieldPresent(sfPoolID))
+        return tx.getFieldH256(sfPoolID);
+
+    if (tx.isFieldPresent(sfAsset) &&
+        tx.isFieldPresent(sfAsset2) &&
+        tx.isFieldPresent(sfFeeTier))
+    {
+        auto const asset = tx[sfAsset].get<Issue>();
+        auto const asset2 = tx[sfAsset2].get<Issue>();
+        auto const feeTier = tx[sfFeeTier];
+        return keylet::clamm(asset, asset2, feeTier).key;
+    }
+
+    return std::nullopt;
+}
+
 }  // namespace xrpl

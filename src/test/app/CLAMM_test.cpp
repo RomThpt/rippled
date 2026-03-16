@@ -1,13 +1,16 @@
 #include <test/jtx.h>
 #include <test/jtx/CLAMM.h>
 #include <test/jtx/Env.h>
+#include <test/jtx/token.h>
 
 #include <xrpl/protocol/CLAMMCore.h>
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/Indexes.h>
 #include <xrpl/protocol/STBitString.h>
 #include <xrpl/protocol/TER.h>
+#include <xrpl/protocol/nft.h>
 #include <xrpl/tx/transactors/dex/CLAMMHelpers.h>
+#include <xrpl/tx/transactors/nft/NFTokenUtils.h>
 
 #include <chrono>
 
@@ -3813,6 +3816,362 @@ struct CLAMM_test : public beast::unit_test::suite
     }
 
     void
+    testNFTokenURIMetadata()
+    {
+        testcase("NFToken URI Metadata");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Deposit to get an NFToken
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+        if (!nftID)
+            return;
+
+        // Find the NFToken and verify URI
+        auto const token =
+            nft::findToken(*env.current(), alice.id(), *nftID);
+        BEAST_EXPECT(token.has_value());
+        if (token)
+        {
+            BEAST_EXPECT(token->isFieldPresent(sfURI));
+            if (token->isFieldPresent(sfURI))
+            {
+                auto const uri = token->getFieldVL(sfURI);
+                std::string uriStr(
+                    reinterpret_cast<char const*>(uri.data()),
+                    uri.size());
+                // URI should contain pool ID and ticks
+                BEAST_EXPECT(uriStr.find(to_string(pid)) != std::string::npos);
+                BEAST_EXPECT(uriStr.find("\"lt\":-100") != std::string::npos);
+                BEAST_EXPECT(uriStr.find("\"ut\":100") != std::string::npos);
+            }
+        }
+    }
+
+    void
+    testPoolResolutionByAssets()
+    {
+        testcase("Pool Resolution By Assets");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Deposit by assets (no PoolID)
+        env(clammDepositByAssets(
+                alice, xrpIssue(), USD.issue(), 1,
+                -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+
+        // Swap by assets
+        env(clammSwapByAssets(
+                bob, xrpIssue(), USD.issue(), 1, XRP(10)),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Vote by assets
+        env(clammVoteByAssets(
+                alice, xrpIssue(), USD.issue(), 1, 400),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Bid by assets
+        env(clammBidByAssets(
+                alice, xrpIssue(), USD.issue(), 1),
+            ter(tesSUCCESS));
+        env.close();
+    }
+
+    void
+    testDeleteEmptyPool()
+    {
+        testcase("CLAMMDelete Empty Pool");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        // Create pool
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Deposit
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+        if (!nftID)
+            return;
+
+        // Full withdraw
+        env(clammWithdraw(alice, *nftID),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Pool exists but is empty
+        BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
+
+        // Delete pool
+        env(clammDelete(bob, xrpIssue(), USD.issue(), 1),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Pool should be gone
+        BEAST_EXPECT(!env.current()->read(keylet::clamm(pid)));
+    }
+
+    void
+    testDeleteNonEmptyPool()
+    {
+        testcase("CLAMMDelete Non-Empty Pool");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        // Create pool
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Deposit (pool has liquidity)
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Try to delete non-empty pool
+        env(clammDelete(bob, xrpIssue(), USD.issue(), 1),
+            ter(tecAMM_NOT_EMPTY));
+        env.close();
+
+        // Pool should still exist
+        BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
+    }
+
+    void
+    testNFTokenTransferUpdatesPosition()
+    {
+        testcase("NFToken Transfer Updates Position");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Alice deposits
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+        if (!nftID)
+            return;
+
+        // Verify alice owns the position
+        {
+            auto const sle = env.current()->read(
+                keylet::clammPosition(*nftID));
+            BEAST_EXPECT(sle);
+            if (sle)
+                BEAST_EXPECT(sle->getAccountID(sfOwner) == alice.id());
+        }
+
+        // Alice creates a sell offer for the position NFT
+        env(token::createOffer(alice, *nftID, XRP(0)),
+            txflags(tfSellNFToken),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Find the sell offer
+        uint256 sellOfferID;
+        {
+            auto const root = keylet::nft_sells(*nftID);
+            auto const dir = env.current()->read(root);
+            BEAST_EXPECT(dir);
+            if (dir)
+            {
+                auto const& items = dir->getFieldV256(sfIndexes);
+                BEAST_EXPECT(items.size() == 1);
+                if (!items.empty())
+                    sellOfferID = items[0];
+            }
+        }
+
+        // Bob accepts the sell offer
+        env(token::acceptSellOffer(bob, sellOfferID),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Verify bob now owns the position
+        {
+            auto const sle = env.current()->read(
+                keylet::clammPosition(*nftID));
+            BEAST_EXPECT(sle);
+            if (sle)
+                BEAST_EXPECT(sle->getAccountID(sfOwner) == bob.id());
+        }
+
+        // Bob should be able to withdraw from the position
+        env(clammWithdraw(bob, *nftID),
+            ter(tesSUCCESS));
+        env.close();
+    }
+
+    void
+    testNFTokenTransferBrokered()
+    {
+        testcase("NFToken Transfer Brokered");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Alice deposits
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+        if (!nftID)
+            return;
+
+        // Alice creates sell offer for 10 XRP
+        env(token::createOffer(alice, *nftID, XRP(10)),
+            txflags(tfSellNFToken),
+            ter(tesSUCCESS));
+        env.close();
+
+        uint256 sellOfferID;
+        {
+            auto const root = keylet::nft_sells(*nftID);
+            auto const dir = env.current()->read(root);
+            BEAST_EXPECT(dir);
+            if (dir)
+            {
+                auto const& items = dir->getFieldV256(sfIndexes);
+                if (!items.empty())
+                    sellOfferID = items[0];
+            }
+        }
+
+        // Bob creates buy offer for 10 XRP
+        env(token::createOffer(bob, *nftID, XRP(10)),
+            token::owner(alice),
+            ter(tesSUCCESS));
+        env.close();
+
+        uint256 buyOfferID;
+        {
+            auto const root = keylet::nft_buys(*nftID);
+            auto const dir = env.current()->read(root);
+            BEAST_EXPECT(dir);
+            if (dir)
+            {
+                auto const& items = dir->getFieldV256(sfIndexes);
+                if (!items.empty())
+                    buyOfferID = items[0];
+            }
+        }
+
+        // Carol brokers the deal
+        env(token::brokerOffers(carol, buyOfferID, sellOfferID),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Verify bob now owns the position
+        {
+            auto const sle = env.current()->read(
+                keylet::clammPosition(*nftID));
+            BEAST_EXPECT(sle);
+            if (sle)
+                BEAST_EXPECT(sle->getAccountID(sfOwner) == bob.id());
+        }
+
+        // Bob should be able to collect fees (even with no fees, tests ownership)
+        env(clammCollectFees(bob, *nftID),
+            ter(tecAMM_EMPTY));
+        env.close();
+    }
+
+    void
     run() override
     {
         testCreate();
@@ -3864,6 +4223,12 @@ struct CLAMM_test : public beast::unit_test::suite
         testDepositErrorPaths();
         testBidErrorPaths();
         testMissingTERPaths();
+        testNFTokenURIMetadata();
+        testPoolResolutionByAssets();
+        testDeleteEmptyPool();
+        testDeleteNonEmptyPool();
+        testNFTokenTransferUpdatesPosition();
+        testNFTokenTransferBrokered();
     }
 };
 

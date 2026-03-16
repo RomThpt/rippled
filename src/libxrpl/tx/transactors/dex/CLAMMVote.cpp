@@ -68,9 +68,9 @@ CLAMMVote::preflight(PreflightContext const& ctx)
 TER
 CLAMMVote::preclaim(PreclaimContext const& ctx)
 {
-    if (ctx.tx.isFieldPresent(sfPoolID))
+    if (auto const poolID = resolvePoolID(ctx.tx))
     {
-        if (!ctx.view.read(keylet::clamm(ctx.tx.getFieldH256(sfPoolID))))
+        if (!ctx.view.read(keylet::clamm(*poolID)))
         {
             JLOG(ctx.j.debug()) << "CLAMM Vote: pool not found.";
             return tecNO_ENTRY;
@@ -83,7 +83,13 @@ TER
 CLAMMVote::doApply()
 {
     auto const account = ctx_.tx[sfAccount];
-    auto const poolID = ctx_.tx.getFieldH256(sfPoolID);
+    auto const optPoolID = resolvePoolID(ctx_.tx);
+    if (!optPoolID)
+    {
+        JLOG(j_.debug()) << "CLAMM Vote: no pool identifier provided.";
+        return temMALFORMED;
+    }
+    auto const poolID = *optPoolID;
     auto const feeNew = ctx_.tx[sfTradingFee];
 
     Sandbox sb(&ctx_.view());

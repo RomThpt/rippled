@@ -1,3 +1,4 @@
+#include <xrpl/basics/Slice.h>
 #include <xrpl/ledger/Sandbox.h>
 #include <xrpl/ledger/View.h>
 #include <xrpl/protocol/CLAMMCore.h>
@@ -57,10 +58,9 @@ TER
 CLAMMDeposit::preclaim(PreclaimContext const& ctx)
 {
     std::shared_ptr<SLE const> sleClamm;
-    if (ctx.tx.isFieldPresent(sfPoolID))
+    if (auto const poolID = resolvePoolID(ctx.tx))
     {
-        sleClamm =
-            ctx.view.read(keylet::clamm(ctx.tx.getFieldH256(sfPoolID)));
+        sleClamm = ctx.view.read(keylet::clamm(*poolID));
         if (!sleClamm)
         {
             JLOG(ctx.j.debug()) << "CLAMM Deposit: pool not found.";
@@ -120,7 +120,13 @@ TER
 CLAMMDeposit::doApply()
 {
     auto const account = ctx_.tx[sfAccount];
-    auto const poolID = ctx_.tx.getFieldH256(sfPoolID);
+    auto const optPoolID = resolvePoolID(ctx_.tx);
+    if (!optPoolID)
+    {
+        JLOG(j_.debug()) << "CLAMM Deposit: no pool identifier provided.";
+        return temMALFORMED;
+    }
+    auto const poolID = *optPoolID;
     auto const lowerTick = ctx_.tx[sfLowerTick];
     auto const upperTick = ctx_.tx[sfUpperTick];
 
@@ -522,8 +528,13 @@ CLAMMDeposit::doApply()
         STObject newToken(
             *nfTokenTemplate,
             sfNFToken,
-            [&nftokenID](STObject& object) {
+            [&nftokenID, &poolID, lowerTick, upperTick](STObject& object) {
                 object.setFieldH256(sfNFTokenID, nftokenID);
+                std::string uri = "{\"pool\":\"" + to_string(poolID) +
+                    "\",\"lt\":" + std::to_string(lowerTick) +
+                    ",\"ut\":" + std::to_string(upperTick) + "}";
+                object.setFieldVL(
+                    sfURI, Slice(uri.data(), uri.size()));
             });
 
         if (auto const ret =

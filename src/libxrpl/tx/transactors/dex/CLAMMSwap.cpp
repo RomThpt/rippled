@@ -52,10 +52,9 @@ TER
 CLAMMSwap::preclaim(PreclaimContext const& ctx)
 {
     std::shared_ptr<SLE const> sleClamm;
-    if (ctx.tx.isFieldPresent(sfPoolID))
+    if (auto const poolID = resolvePoolID(ctx.tx))
     {
-        sleClamm =
-            ctx.view.read(keylet::clamm(ctx.tx.getFieldH256(sfPoolID)));
+        sleClamm = ctx.view.read(keylet::clamm(*poolID));
         if (!sleClamm)
         {
             JLOG(ctx.j.debug()) << "CLAMM Swap: pool not found.";
@@ -103,7 +102,13 @@ TER
 CLAMMSwap::doApply()
 {
     auto const account = ctx_.tx[sfAccount];
-    auto const poolID = ctx_.tx.getFieldH256(sfPoolID);
+    auto const optPoolID = resolvePoolID(ctx_.tx);
+    if (!optPoolID)
+    {
+        JLOG(j_.debug()) << "CLAMM Swap: no pool identifier provided.";
+        return temMALFORMED;
+    }
+    auto const poolID = *optPoolID;
     auto const amountIn = ctx_.tx[sfAmount];
 
     Sandbox sb(&ctx_.view());

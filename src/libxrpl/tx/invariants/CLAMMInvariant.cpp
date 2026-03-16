@@ -5,6 +5,7 @@
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/LedgerFormats.h>
 #include <xrpl/protocol/TxFormats.h>
+#include <xrpl/tx/transactors/dex/CLAMMHelpers.h>
 
 namespace xrpl {
 
@@ -21,6 +22,8 @@ ValidCLAMM::visitEntry(
     {
         if (!before && after)
             clammCreated_ = true;
+        else if (isDelete)
+            clammDeleted_ = true;
         else
             clammModified_ = true;
 
@@ -32,7 +35,10 @@ ValidCLAMM::visitEntry(
             {
                 auto const sp = after->getFieldH128(sfSqrtPrice);
                 clammSqrtPriceZero_ = (sp == base_uint<128>{});
+                clammSqrtPriceAfter_ = sp;
             }
+            clammCurrentTickAfter_ = after->getFieldI32(sfCurrentTick);
+            clammTickSpacing_ = after->getFieldU16(sfTickSpacing);
         }
     }
 
@@ -43,6 +49,14 @@ ValidCLAMM::visitEntry(
             ++clammTicksCreated_;
         if (isDelete)
             ++clammTicksDeleted_;
+
+        // Verify tick alignment for created/modified ticks
+        if (after && typeAfter == ltCLAMM_TICK && clammTickSpacing_)
+        {
+            auto const tickIndex = after->getFieldI32(sfTickIndex);
+            if (!isValidCLAMMTick(tickIndex, *clammTickSpacing_))
+                clammTickMisaligned_ = true;
+        }
     }
 
     if (typeAfter == ltCLAMM_POSITION || typeBefore == ltCLAMM_POSITION)
@@ -52,7 +66,82 @@ ValidCLAMM::visitEntry(
             ++clammPositionsCreated_;
         if (isDelete)
             ++clammPositionsDeleted_;
+
+        // Verify position bounds
+        if (after && typeAfter == ltCLAMM_POSITION)
+        {
+            auto const lower = after->getFieldI32(sfLowerTick);
+            auto const upper = after->getFieldI32(sfUpperTick);
+            if (lower >= upper ||
+                lower < CLAMM_MIN_TICK ||
+                upper > CLAMM_MAX_TICK)
+            {
+                clammPositionBadBounds_ = true;
+            }
+        }
     }
+}
+
+bool
+ValidCLAMM::validateValues(beast::Journal const& j) const
+{
+    // SqrtPrice must be in [minSqrtRatio, maxSqrtRatio)
+    if (clammSqrtPriceAfter_)
+    {
+        auto const sqrtPrice = clamm::fromSLEField(*clammSqrtPriceAfter_);
+        if (sqrtPrice < clamm::minSqrtRatio() ||
+            sqrtPrice >= clamm::maxSqrtRatio())
+        {
+            JLOG(j.fatal())
+                << "Invariant failed: SqrtPrice out of valid range";
+            return false;
+        }
+    }
+
+    // CurrentTick must be in [MIN_TICK, MAX_TICK]
+    if (clammCurrentTickAfter_)
+    {
+        if (*clammCurrentTickAfter_ < CLAMM_MIN_TICK ||
+            *clammCurrentTickAfter_ > CLAMM_MAX_TICK)
+        {
+            JLOG(j.fatal())
+                << "Invariant failed: CurrentTick "
+                << *clammCurrentTickAfter_ << " out of valid range";
+            return false;
+        }
+    }
+
+    // FeeTier and TickSpacing must be coherent
+    if (clammFeeTier_ && clammTickSpacing_)
+    {
+        if (!isValidCLAMMFeeTier(*clammFeeTier_) ||
+            clammTickSpacing(*clammFeeTier_) != *clammTickSpacing_)
+        {
+            JLOG(j.fatal())
+                << "Invariant failed: FeeTier/TickSpacing mismatch: tier="
+                << static_cast<unsigned>(*clammFeeTier_)
+                << " spacing=" << *clammTickSpacing_;
+            return false;
+        }
+    }
+
+    // No misaligned ticks
+    if (clammTickMisaligned_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: tick not aligned to TickSpacing";
+        return false;
+    }
+
+    // No invalid position bounds
+    if (clammPositionBadBounds_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: position has invalid tick bounds";
+        return false;
+    }
+
+    return true;
 }
 
 bool
@@ -66,8 +155,8 @@ ValidCLAMM::finalize(
     // If the CLAMM amendment is not enabled, no CLAMM objects should exist
     if (!view.rules().enabled(featureCLAMM))
     {
-        if (clammCreated_ || clammModified_ || clammTickChanged_ ||
-            clammPositionChanged_)
+        if (clammCreated_ || clammModified_ || clammDeleted_ ||
+            clammTickChanged_ || clammPositionChanged_)
         {
             JLOG(j.fatal()) << "Invariant failed: CLAMM objects modified "
                                "without amendment enabled";
@@ -98,6 +187,8 @@ ValidCLAMM::finalize(
             return finalizeVote(tx, view, j);
         case ttCLAMM_BID:
             return finalizeBid(tx, view, j);
+        case ttCLAMM_DELETE:
+            return finalizeDelete(tx, view, j);
         default:
             break;
     }
@@ -125,7 +216,7 @@ ValidCLAMM::finalizeCreate(
             << static_cast<unsigned>(*clammFeeTier_);
         return false;
     }
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -141,7 +232,7 @@ ValidCLAMM::finalizeDeposit(
             << "Invariant failed: CLAMMDeposit did not create position";
         return false;
     }
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -210,7 +301,7 @@ ValidCLAMM::finalizeWithdraw(
         return false;
     }
 
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -233,7 +324,7 @@ ValidCLAMM::finalizeSwap(
             << "Invariant failed: CLAMMSwap resulted in zero SqrtPrice";
         return false;
     }
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -249,7 +340,7 @@ ValidCLAMM::finalizeCollectFees(
             << "Invariant failed: CLAMMCollectFees did not update position";
         return false;
     }
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -265,7 +356,7 @@ ValidCLAMM::finalizeVote(
             << "Invariant failed: CLAMMVote did not modify pool";
         return false;
     }
-    return true;
+    return validateValues(j);
 }
 
 bool
@@ -281,6 +372,23 @@ ValidCLAMM::finalizeBid(
             << "Invariant failed: CLAMMBid did not modify pool";
         return false;
     }
+    return validateValues(j);
+}
+
+bool
+ValidCLAMM::finalizeDelete(
+    STTx const& tx,
+    ReadView const& view,
+    beast::Journal const& j) const
+{
+    // Delete must not create any new objects
+    if (clammPositionsCreated_ != 0 || clammTicksCreated_ != 0)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMDelete created objects";
+        return false;
+    }
+    // No value validation for delete -- pool is being removed
     return true;
 }
 

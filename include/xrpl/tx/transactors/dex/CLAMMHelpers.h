@@ -7,6 +7,7 @@
 #include <xrpl/protocol/CLAMMCore.h>
 #include <xrpl/protocol/Indexes.h>
 #include <xrpl/protocol/STAmount.h>
+#include <xrpl/protocol/STTx.h>
 
 #include <boost/multiprecision/cpp_int.hpp>
 
@@ -268,4 +269,12 @@ STAmount
 makeSTAmount(Issue const& issue, std::uint64_t amount);
 
 }  // namespace clamm
+
+/** Resolve pool ID from transaction fields.
+ *  Returns sfPoolID if present, or computes it from sfAsset + sfAsset2 + sfFeeTier.
+ *  Returns nullopt if neither mode provides sufficient fields.
+ */
+std::optional<uint256>
+resolvePoolID(STTx const& tx);
+
 }  // namespace xrpl

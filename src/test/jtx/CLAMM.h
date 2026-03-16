@@ -263,6 +263,113 @@ clammBidMin(
     return jv;
 }
 
+// Create CLAMMDeposit by assets (no PoolID)
+inline Json::Value
+clammDepositByAssets(
+    jtx::Account const& account,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier,
+    std::int32_t lowerTick,
+    std::int32_t upperTick,
+    STAmount const& amount,
+    STAmount const& amount2)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMDeposit;
+    jv[jss::Account] = account.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    jv[sfLowerTick.jsonName] = lowerTick;
+    jv[sfUpperTick.jsonName] = upperTick;
+    amount.setJson(jv[jss::Amount]);
+    amount2.setJson(jv[jss::Amount2]);
+    return jv;
+}
+
+// Create CLAMMSwap by assets (no PoolID)
+inline Json::Value
+clammSwapByAssets(
+    jtx::Account const& account,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier,
+    STAmount const& amountIn)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMSwap;
+    jv[jss::Account] = account.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    amountIn.setJson(jv[jss::Amount]);
+    return jv;
+}
+
+// Create CLAMMVote by assets (no PoolID)
+inline Json::Value
+clammVoteByAssets(
+    jtx::Account const& account,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier,
+    std::uint16_t tradingFee)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMVote;
+    jv[jss::Account] = account.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    jv[jss::TradingFee] = tradingFee;
+    return jv;
+}
+
+// Create CLAMMBid by assets (no PoolID)
+inline Json::Value
+clammBidByAssets(
+    jtx::Account const& account,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMBid;
+    jv[jss::Account] = account.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    return jv;
+}
+
+// Create CLAMMDelete transaction JSON
+inline Json::Value
+clammDelete(
+    jtx::Account const& account,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMDelete;
+    jv[jss::Account] = account.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    return jv;
+}
+
 }  // namespace jtx
 }  // namespace test
 }  // namespace xrpl
