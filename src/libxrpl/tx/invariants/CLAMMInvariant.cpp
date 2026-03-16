@@ -150,7 +150,66 @@ ValidCLAMM::finalizeWithdraw(
     ReadView const& view,
     beast::Journal const& j) const
 {
-    // Withdrawal invariants checked on full implementation
+    // Pool must be modified (always updated with PreviousTxnID)
+    if (!clammModified_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw did not modify pool";
+        return false;
+    }
+
+    // Position must be either updated (partial) or deleted (full)
+    if (!clammPositionChanged_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw did not touch position";
+        return false;
+    }
+
+    // Withdrawal must not create new positions
+    if (clammPositionsCreated_ != 0)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw created "
+            << clammPositionsCreated_ << " positions";
+        return false;
+    }
+
+    // At most one position can be deleted per withdrawal
+    if (clammPositionsDeleted_ > 1)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw deleted "
+            << clammPositionsDeleted_ << " positions";
+        return false;
+    }
+
+    // Tick entries (lower and upper) must be touched
+    if (!clammTickChanged_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw did not update ticks";
+        return false;
+    }
+
+    // Withdrawal must not create new ticks
+    if (clammTicksCreated_ != 0)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw created "
+            << clammTicksCreated_ << " ticks";
+        return false;
+    }
+
+    // At most 2 ticks deleted (lower and upper when liquidity reaches zero)
+    if (clammTicksDeleted_ > 2)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMWithdraw deleted "
+            << clammTicksDeleted_ << " ticks";
+        return false;
+    }
+
     return true;
 }
 

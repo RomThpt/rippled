@@ -223,6 +223,46 @@ clammSetupEnv(
     env.close();
 }
 
+// Create CLAMMSwap with DeliverMin (slippage protection)
+inline Json::Value
+clammSwapWithDeliverMin(
+    jtx::Account const& account,
+    uint256 const& poolID,
+    STAmount const& amountIn,
+    STAmount const& deliverMin)
+{
+    auto jv = clammSwap(account, poolID, amountIn);
+    deliverMin.setJson(jv[sfDeliverMin.jsonName]);
+    return jv;
+}
+
+// Create CLAMMWithdraw partial with MinAmount/MinAmount2
+inline Json::Value
+clammWithdrawWithMin(
+    jtx::Account const& account,
+    uint256 const& nfTokenID,
+    clamm::uint128 const& liquidityAmount,
+    STAmount const& minAmount,
+    STAmount const& minAmount2)
+{
+    auto jv = clammWithdrawPartial(account, nfTokenID, liquidityAmount);
+    minAmount.setJson(jv[sfMinAmount.jsonName]);
+    minAmount2.setJson(jv[sfMinAmount2.jsonName]);
+    return jv;
+}
+
+// Create CLAMMBid with BidMin
+inline Json::Value
+clammBidMin(
+    jtx::Account const& account,
+    uint256 const& poolID,
+    STAmount const& bidMin)
+{
+    auto jv = clammBid(account, poolID);
+    bidMin.setJson(jv[sfBidMin.jsonName]);
+    return jv;
+}
+
 }  // namespace jtx
 }  // namespace test
 }  // namespace xrpl

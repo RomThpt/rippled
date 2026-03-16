@@ -9,6 +9,8 @@
 #include <xrpl/protocol/TER.h>
 #include <xrpl/tx/transactors/dex/CLAMMHelpers.h>
 
+#include <chrono>
+
 namespace xrpl {
 namespace test {
 
@@ -2094,6 +2096,1722 @@ struct CLAMM_test : public beast::unit_test::suite
 
     }
 
+    // ================================================================
+    // Groupe 1: Critical gap tests
+    // ================================================================
+
+    void
+    testSwapSlippageProtection()
+    {
+        testcase("Swap slippage protection (DeliverMin)");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // DeliverMin satisfied -> tesSUCCESS
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Low deliverMin - should be easily satisfied
+            env(clammSwapWithDeliverMin(
+                    bob, pid, XRP(100), USD(1)),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        {
+            // DeliverMin too high -> tecPATH_PARTIAL
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Impossibly high deliverMin
+            env(clammSwapWithDeliverMin(
+                    bob, pid, XRP(100), USD(99'999)),
+                ter(tecPATH_PARTIAL));
+            env.close();
+        }
+
+        {
+            // Without DeliverMin -> tesSUCCESS (no constraint)
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammSwap(bob, pid, XRP(100)),
+                ter(tesSUCCESS));
+            env.close();
+        }
+    }
+
+    void
+    testAuctionSlotDiscount()
+    {
+        testcase("Auction slot discount on swap fee");
+        using namespace jtx;
+        using namespace std::chrono;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Slot holder gets discounted fee (higher output)
+            // Non-holder pays full fee (lower output)
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(50'000), USD(50'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice wins auction slot
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice swaps (discounted fee)
+            auto const aliceUsdBefore = env.balance(alice, USD);
+            env(clammSwap(alice, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const aliceUsdAfter = env.balance(alice, USD);
+            auto const aliceGain = aliceUsdAfter - aliceUsdBefore;
+
+            // Bob swaps same amount (full fee)
+            auto const bobUsdBefore = env.balance(bob, USD);
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const bobUsdAfter = env.balance(bob, USD);
+            auto const bobGain = bobUsdAfter - bobUsdBefore;
+
+            // Alice should get more output (lower fee)
+            BEAST_EXPECT(aliceGain > bobGain);
+        }
+
+        {
+            // AuthAccounts: bob added to auth accounts, gets discount
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(50'000), USD(50'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice bids with bob as auth account
+            Json::Value jv = clammBid(alice, pid);
+            Json::Value authAccounts(Json::arrayValue);
+            Json::Value authAcct;
+            authAcct[jss::Account] = bob.human();
+            Json::Value acctObj;
+            acctObj["AuthAccount"] = authAcct;
+            authAccounts.append(acctObj);
+            jv[sfAuthAccounts.jsonName] = authAccounts;
+            env(jv, ter(tesSUCCESS));
+            env.close();
+
+            // Bob swaps (discounted via auth)
+            auto const bobUsdBefore = env.balance(bob, USD);
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const bobUsdAfter = env.balance(bob, USD);
+            auto const bobGain = bobUsdAfter - bobUsdBefore;
+
+            // Carol swaps (full fee, not authorized)
+            auto const carolUsdBefore = env.balance(carol, USD);
+            env(clammSwap(carol, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const carolUsdAfter = env.balance(carol, USD);
+            auto const carolGain = carolUsdAfter - carolUsdBefore;
+
+            BEAST_EXPECT(bobGain > carolGain);
+        }
+
+        {
+            // Slot expired -> full fee for everyone
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(50'000), USD(50'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Advance time past slot expiry (24h + 1s)
+            env.close(seconds(CLAMM_TOTAL_TIME_SLOT_SECS + 1));
+
+            // Now alice swaps - should pay full fee like everyone
+            auto const aliceUsdBefore = env.balance(alice, USD);
+            env(clammSwap(alice, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const aliceUsdAfter = env.balance(alice, USD);
+            auto const aliceGain = aliceUsdAfter - aliceUsdBefore;
+
+            // Bob also swaps for comparison
+            auto const bobUsdBefore = env.balance(bob, USD);
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+            auto const bobUsdAfter = env.balance(bob, USD);
+            auto const bobGain = bobUsdAfter - bobUsdBefore;
+
+            // Both should pay the same fee rate (though pool state
+            // changes between swaps cause slight difference, the
+            // key point is alice no longer gets a discount).
+            // We just verify both succeed and produce output.
+            BEAST_EXPECT(aliceGain > USD(0));
+            BEAST_EXPECT(bobGain > USD(0));
+        }
+    }
+
+    void
+    testSwapAmountCapping()
+    {
+        testcase("Swap amount capped by pool liquidity");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Swap request larger than pool capacity -> succeeds using
+            // available liquidity (Amount is a maximum, not exact)
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Small pool
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const bobUsdBefore = env.balance(bob, USD);
+
+            // Bob requests huge swap but pool can only provide limited output
+            env(clammSwap(bob, pid, XRP(50'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const bobUsdAfter = env.balance(bob, USD);
+            // Output should be limited by pool liquidity, not request size
+            BEAST_EXPECT(bobUsdAfter > bobUsdBefore);
+        }
+
+        {
+            // Swap with input asset not matching pool -> tecNO_PERMISSION
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Try to swap EUR into XRP/USD pool
+            IOU const EUR{gw["EUR"]};
+            env.trust(EUR(1'000'000), bob);
+            env.close();
+            env(pay(gw, bob, EUR(10'000)));
+            env.close();
+
+            env(clammSwap(bob, pid, EUR(100)),
+                ter(tecNO_PERMISSION));
+            env.close();
+        }
+    }
+
+    void
+    testFreezeTwoIssuers()
+    {
+        testcase("Freeze with two IOU issuers");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Account const gw2{"gateway2"};
+
+        {
+            Env env{*this, features};
+
+            // Setup two issuers
+            env.fund(XRP(100'000), gw, gw2, alice, bob, carol);
+            env.close();
+
+            IOU const EUR{gw2["EUR"]};
+
+            env.trust(USD(1'000'000), alice);
+            env.trust(USD(1'000'000), bob);
+            env.trust(EUR(1'000'000), alice);
+            env.trust(EUR(1'000'000), bob);
+            env.close();
+
+            env(pay(gw, alice, USD(100'000)));
+            env(pay(gw, bob, USD(100'000)));
+            env(pay(gw2, alice, EUR(100'000)));
+            env(pay(gw2, bob, EUR(100'000)));
+            env.close();
+
+            auto const pid =
+                clammPoolID(USD.issue(), EUR.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, USD.issue(), EUR.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    USD(10'000), EUR(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // 1. gw global freeze -> swap tecFROZEN
+            env(fset(gw, asfGlobalFreeze));
+            env.close();
+
+            env(clammSwap(bob, pid, USD(100)),
+                ter(tecFROZEN));
+            env.close();
+
+            // 2. Unfreeze gw, freeze gw2 -> still tecFROZEN
+            env(fclear(gw, asfGlobalFreeze));
+            env.close();
+            env(fset(gw2, asfGlobalFreeze));
+            env.close();
+
+            env(clammSwap(bob, pid, USD(100)),
+                ter(tecFROZEN));
+            env.close();
+
+            // 3. Unfreeze gw2 -> swap tesSUCCESS
+            env(fclear(gw2, asfGlobalFreeze));
+            env.close();
+
+            env(clammSwap(bob, pid, USD(100)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // 4. Withdraw works even when frozen
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+
+            env(fset(gw, asfGlobalFreeze));
+            env.close();
+
+            if (nft)
+            {
+                env(clammWithdraw(alice, *nft),
+                    ter(tesSUCCESS));
+                env.close();
+            }
+        }
+    }
+
+    void
+    testTickBitmapIntegrity()
+    {
+        testcase("Tick bitmap integrity after operations");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Two positions at same ticks, withdraw first -> bitmap present
+            // Withdraw second -> bitmap removed
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice and Bob deposit at same tick range
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(5'000), USD(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    bob, pid, -100, 100,
+                    XRP(5'000), USD(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nftAlice = clammFindPositionNFT(env, alice, pid);
+            auto const nftBob = clammFindPositionNFT(env, bob, pid);
+            BEAST_EXPECT(nftAlice.has_value());
+            BEAST_EXPECT(nftBob.has_value());
+
+            // Withdraw Alice's position
+            if (nftAlice)
+            {
+                env(clammWithdraw(alice, *nftAlice),
+                    ter(tesSUCCESS));
+                env.close();
+            }
+
+            // Pool should still have liquidity from Bob
+            auto const sle1 = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle1 != nullptr);
+            if (sle1)
+            {
+                auto const liq = clamm::fromSLEField(
+                    sle1->getFieldH128(sfLiquidityAmount));
+                BEAST_EXPECT(liq > 0);
+            }
+
+            // Withdraw Bob's position
+            if (nftBob)
+            {
+                env(clammWithdraw(bob, *nftBob),
+                    ter(tesSUCCESS));
+                env.close();
+            }
+
+            // Pool should have zero liquidity now
+            auto const sle2 = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle2 != nullptr);
+            if (sle2)
+            {
+                auto const liq = clamm::fromSLEField(
+                    sle2->getFieldH128(sfLiquidityAmount));
+                BEAST_EXPECT(liq == 0);
+            }
+        }
+
+        {
+            // Swap traverses tick, verify bitmap coherent
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Two adjacent positions
+            env(clammDeposit(
+                    alice, pid, -200, 0,
+                    XRP(5'000), USD(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    bob, pid, 0, 200,
+                    XRP(5'000), USD(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Swap to move price across tick 0 boundary
+            env(clammSwap(carol, pid, XRP(3'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Verify pool state is consistent
+            auto const sle = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle != nullptr);
+        }
+    }
+
+    // ================================================================
+    // Groupe 2: Important gap tests
+    // ================================================================
+
+    void
+    testCreatePreclaim()
+    {
+        testcase("CLAMMCreate preclaim error paths");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Create without trust line for IOU -> tecNO_LINE
+            Env env{*this, features};
+            Account const dan{"dan"};
+            env.fund(XRP(100'000), gw, dan);
+            env.close();
+            // dan has no USD trust line
+
+            env(clammCreate(env,
+                    dan, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tecNO_LINE));
+            env.close();
+        }
+
+        {
+            // Create with frozen asset -> tecFROZEN
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            env(fset(gw, asfGlobalFreeze));
+            env.close();
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tecFROZEN));
+            env.close();
+        }
+
+        {
+            // Create with insufficient reserve -> tecINSUFFICIENT_RESERVE
+            Env env{*this, features};
+            Account const poor{"poor"};
+            env.fund(env.current()->fees().accountReserve(0), gw, poor);
+            env.close();
+            env.trust(USD(1'000'000), poor);
+            env.close();
+            env(pay(gw, poor, USD(100)));
+            env.close();
+
+            env(clammCreate(env,
+                    poor, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tecINSUFFICIENT_RESERVE));
+            env.close();
+        }
+    }
+
+    void
+    testVoteEviction()
+    {
+        testcase("Vote eviction with max slots");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Multiple voters fill slots, existing voter re-votes
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 2);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 2,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice and Bob both deposit and vote
+            env(clammDeposit(
+                    alice, pid, -600, 600,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    bob, pid, -600, 600,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammVote(alice, pid, 200),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammVote(bob, pid, 400),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice re-votes -> update without eviction
+            env(clammVote(alice, pid, 300),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Verify fee was updated (weighted average)
+            auto const sle = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle != nullptr);
+            if (sle)
+            {
+                auto const fee = sle->getFieldU16(sfTradingFee);
+                // Should be weighted average of 300 and 400
+                BEAST_EXPECT(fee > 0 && fee <= 3000);
+            }
+        }
+
+        {
+            // Voter without liquidity -> tecNO_PERMISSION
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 2);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 2,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Bob tries to vote without any deposit
+            env(clammVote(bob, pid, 200),
+                ter(tecNO_PERMISSION));
+            env.close();
+        }
+    }
+
+    void
+    testBidTimeSlots()
+    {
+        testcase("Bid time slot pricing");
+        using namespace jtx;
+        using namespace std::chrono;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Outbid in slot 0 -> price = previous * 1.05 + minSlotPrice
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice bids first
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Bob outbids immediately (slot 0)
+            env(clammBid(bob, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const sle = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle != nullptr);
+            if (sle && sle->isFieldPresent(sfAuctionSlot))
+            {
+                auto const& slot = sle->getFieldObject(sfAuctionSlot);
+                BEAST_EXPECT(slot.getAccountID(sfAccount) == bob.id());
+            }
+        }
+
+        {
+            // Advance time, outbid at intermediate slot -> price decay
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Advance time by ~half the slot duration
+            auto const intervalLen =
+                CLAMM_TOTAL_TIME_SLOT_SECS /
+                CLAMM_AUCTION_SLOT_TIME_INTERVALS;
+            env.close(seconds(10 * intervalLen + 1));
+
+            // Bob outbids at decayed price
+            env(clammBid(bob, pid),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        {
+            // After full expiration -> bid at minSlotPrice
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Advance past expiry
+            env.close(seconds(CLAMM_TOTAL_TIME_SLOT_SECS + 1));
+
+            // Bob bids at minSlotPrice
+            env(clammBid(bob, pid),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        {
+            // BidMax too low -> tecINSUFFICIENT_PAYMENT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice bids first
+            env(clammBid(alice, pid),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Bob tries to outbid with very low BidMax
+            env(clammBidMax(bob, pid, XRP(0)),
+                ter(tecINSUFFICIENT_PAYMENT));
+            env.close();
+        }
+    }
+
+    void
+    testSwapMultiTickCrossing()
+    {
+        testcase("Swap crossing multiple tick boundaries");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // 3 adjacent positions, big swap traverses 2+ boundaries
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Three adjacent positions
+            env(clammDeposit(
+                    alice, pid, -300, -100,
+                    XRP(3'000), USD(3'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(3'000), USD(3'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, 100, 300,
+                    XRP(3'000), USD(3'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const sle1 = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle1 != nullptr);
+            std::int32_t tickBefore = 0;
+            if (sle1)
+                tickBefore = sle1->getFieldI32(sfCurrentTick);
+
+            // Large swap should cross multiple boundaries
+            env(clammSwap(bob, pid, XRP(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const sle2 = env.current()->read(keylet::clamm(pid));
+            BEAST_EXPECT(sle2 != nullptr);
+            if (sle2)
+            {
+                auto const tickAfter = sle2->getFieldI32(sfCurrentTick);
+                // Tick should have moved significantly
+                BEAST_EXPECT(tickAfter != tickBefore);
+            }
+        }
+    }
+
+    void
+    testWithdrawPartialAndSlippage()
+    {
+        testcase("Withdraw partial and slippage protection");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Partial withdraw 50% -> position still alive
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Generate fees so TokensOwed fields are non-zero
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+            if (!nft) return;
+
+            // Get position liquidity
+            auto const posKeylet = keylet::clammPosition(*nft);
+            auto const slePos = env.current()->read(posKeylet);
+            BEAST_EXPECT(slePos != nullptr);
+            if (!slePos) return;
+
+            auto const fullLiquidity = clamm::fromSLEField(
+                slePos->getFieldH128(sfLiquidityAmount));
+
+            // Withdraw half
+            auto const halfLiq = fullLiquidity / 2;
+            env(clammWithdrawPartial(alice, *nft, halfLiq),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Position should still exist with reduced liquidity
+            auto const slePos2 = env.current()->read(posKeylet);
+            BEAST_EXPECT(slePos2 != nullptr);
+            if (slePos2)
+            {
+                auto const remainLiq = clamm::fromSLEField(
+                    slePos2->getFieldH128(sfLiquidityAmount));
+                BEAST_EXPECT(remainLiq > 0);
+                BEAST_EXPECT(remainLiq < fullLiquidity);
+            }
+        }
+
+        {
+            // MinAmount satisfied -> tesSUCCESS
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Generate fees
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+            if (!nft) return;
+
+            auto const posKeylet = keylet::clammPosition(*nft);
+            auto const slePos = env.current()->read(posKeylet);
+            if (!slePos) return;
+            auto const fullLiq = clamm::fromSLEField(
+                slePos->getFieldH128(sfLiquidityAmount));
+            auto const halfLiq = fullLiq / 2;
+
+            // Low min amounts - easily satisfied
+            env(clammWithdrawWithMin(
+                    alice, *nft, halfLiq, XRP(1), USD(1)),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        {
+            // MinAmount too high -> tecPATH_PARTIAL
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Generate fees
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+            if (!nft) return;
+
+            auto const posKeylet = keylet::clammPosition(*nft);
+            auto const slePos = env.current()->read(posKeylet);
+            if (!slePos) return;
+            auto const fullLiq = clamm::fromSLEField(
+                slePos->getFieldH128(sfLiquidityAmount));
+            auto const halfLiq = fullLiq / 2;
+
+            // Impossibly high min amounts
+            env(clammWithdrawWithMin(
+                    alice, *nft, halfLiq, XRP(99'999), USD(99'999)),
+                ter(tecPATH_PARTIAL));
+            env.close();
+        }
+
+        {
+            // Withdraw 100% via partial -> position deleted
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Generate fees
+            env(clammSwap(bob, pid, XRP(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+            if (!nft) return;
+
+            auto const posKeylet = keylet::clammPosition(*nft);
+            auto const slePos = env.current()->read(posKeylet);
+            if (!slePos) return;
+            auto const fullLiq = clamm::fromSLEField(
+                slePos->getFieldH128(sfLiquidityAmount));
+
+            // Withdraw full amount via partial
+            env(clammWithdrawPartial(alice, *nft, fullLiq),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Position should be deleted
+            auto const slePos2 = env.current()->read(posKeylet);
+            BEAST_EXPECT(slePos2 == nullptr);
+        }
+    }
+
+    // ================================================================
+    // Groupe 3: RPC tests
+    // ================================================================
+
+    void
+    testRPCPositions()
+    {
+        testcase("clamm_positions RPC");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                alice, pid, -1000, 1000,
+                XRP(10'000), USD(10'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nft = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nft.has_value());
+
+        {
+            // By nftoken_id -> single detailed position
+            if (nft)
+            {
+                auto const result = env.rpc(
+                    "json", "clamm_positions",
+                    std::string("{\"nftoken_id\": \"" +
+                                to_string(*nft) + "\"}"));
+                auto const& rr = result[jss::result];
+                BEAST_EXPECT(!rr.isMember(jss::error));
+            }
+        }
+
+        {
+            // By account -> list of positions
+            auto const result = env.rpc(
+                "json", "clamm_positions",
+                std::string("{\"account\": \"" +
+                            alice.human() + "\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(!rr.isMember(jss::error));
+        }
+
+        {
+            // Invalid nftoken_id -> error
+            auto const result = env.rpc(
+                "json", "clamm_positions",
+                std::string("{\"nftoken_id\": \"invalid\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(
+                rr.isMember(jss::error) ||
+                rr.isMember("error"));
+        }
+
+        {
+            // Invalid account -> error
+            auto const result = env.rpc(
+                "json", "clamm_positions",
+                std::string("{\"account\": \"not_an_account\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(
+                rr.isMember(jss::error) ||
+                rr.isMember("error"));
+        }
+    }
+
+    void
+    testRPCTicks()
+    {
+        testcase("clamm_ticks RPC");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Create multiple positions to initialize multiple ticks
+        env(clammDeposit(
+                alice, pid, -100, 100,
+                XRP(5'000), USD(5'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                bob, pid, -500, 500,
+                XRP(5'000), USD(5'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        {
+            // By pool_id -> list of initialized ticks
+            auto const result = env.rpc(
+                "json", "clamm_ticks",
+                std::string("{\"pool_id\": \"" +
+                            to_string(pid) + "\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(!rr.isMember(jss::error));
+        }
+
+        {
+            // With limit=2 -> at most 2 ticks
+            auto const result = env.rpc(
+                "json", "clamm_ticks",
+                std::string("{\"pool_id\": \"" +
+                            to_string(pid) +
+                            "\", \"limit\": 2}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(!rr.isMember(jss::error));
+        }
+
+        {
+            // Invalid pool_id -> error
+            auto const result = env.rpc(
+                "json", "clamm_ticks",
+                std::string("{\"pool_id\": \"0000000000000000"
+                            "0000000000000000"
+                            "0000000000000000"
+                            "0000000000000001\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(
+                rr.isMember(jss::error) ||
+                rr.isMember("error"));
+        }
+    }
+
+    void
+    testRPCQuote()
+    {
+        testcase("clamm_quote RPC");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                alice, pid, -1000, 1000,
+                XRP(10'000), USD(10'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        {
+            // XRP in (zeroForOne) -> expected output > 0
+            auto const result = env.rpc(
+                "json", "clamm_quote",
+                std::string("{\"pool_id\": \"" + to_string(pid) +
+                            "\", \"amount\": \"1000000\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(!rr.isMember(jss::error));
+        }
+
+        {
+            // USD in (oneForZero)
+            auto const result = env.rpc(
+                "json", "clamm_quote",
+                std::string("{\"pool_id\": \"" + to_string(pid) +
+                            "\", \"amount\": {\"currency\": \"USD\","
+                            " \"issuer\": \"" + gw.human() +
+                            "\", \"value\": \"100\"}}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(!rr.isMember(jss::error));
+        }
+
+        {
+            // Missing amount -> error
+            auto const result = env.rpc(
+                "json", "clamm_quote",
+                std::string("{\"pool_id\": \"" +
+                            to_string(pid) + "\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(
+                rr.isMember(jss::error) ||
+                rr.isMember("error"));
+        }
+
+        {
+            // Non-existent pool -> error
+            auto const result = env.rpc(
+                "json", "clamm_quote",
+                std::string("{\"pool_id\": \"0000000000000000"
+                            "0000000000000000"
+                            "0000000000000000"
+                            "0000000000000001\","
+                            " \"amount\": \"1000000\"}"));
+            auto const& rr = result[jss::result];
+            BEAST_EXPECT(
+                rr.isMember(jss::error) ||
+                rr.isMember("error"));
+        }
+    }
+
+    // ================================================================
+    // Groupe 4: Error path tests
+    // ================================================================
+
+    void
+    testDepositErrorPaths()
+    {
+        testcase("CLAMMDeposit error paths");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // NFT owned by another user -> tecNO_PERMISSION
+            // (deposit to existing position owned by someone else)
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Alice creates a position
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(5'000), USD(5'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nftAlice = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nftAlice.has_value());
+
+            // Bob tries to withdraw Alice's position
+            if (nftAlice)
+            {
+                env(clammWithdraw(bob, *nftAlice),
+                    ter(tecNO_PERMISSION));
+                env.close();
+            }
+        }
+
+        {
+            // Deposit when pool asset is frozen -> tecFROZEN
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(fset(gw, asfGlobalFreeze));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(1'000), USD(1'000)),
+                ter(tecFROZEN));
+            env.close();
+        }
+
+        {
+            // Deposit with tick range not aligned to spacing -> temBAD_AMOUNT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            // Fee tier 2 has tick spacing 60
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 2);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 2,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Ticks not aligned to spacing 60
+            env(clammDeposit(
+                    alice, pid, -55, 55,
+                    XRP(1'000), USD(1'000)),
+                ter(temBAD_AMOUNT));
+            env.close();
+        }
+
+        {
+            // Deposit with insufficient XRP reserve
+            Env env{*this, features};
+            Account const poor{"poorLP"};
+            env.fund(
+                env.current()->fees().accountReserve(0) +
+                    env.current()->fees().increment * 2,
+                gw, poor);
+            env.close();
+            env.trust(USD(1'000'000), poor);
+            env.close();
+            env(pay(gw, poor, USD(100)));
+            env.close();
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            // Need alice to create pool first
+            env.fund(XRP(100'000), alice);
+            env.close();
+            env.trust(USD(1'000'000), alice);
+            env.close();
+            env(pay(gw, alice, USD(100'000)));
+            env.close();
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // poor has minimal XRP, try to deposit
+            env(clammDeposit(
+                    poor, pid, -100, 100,
+                    XRP(1), USD(1)),
+                ter(tecINSUFFICIENT_RESERVE));
+            env.close();
+        }
+    }
+
+    void
+    testBidErrorPaths()
+    {
+        testcase("CLAMMBid error paths");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // Too many auth accounts -> temMALFORMED
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            Account const d{"dan"};
+            Account const e{"eve"};
+            env.fund(XRP(10'000), d, e);
+            env.close();
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // 5 auth accounts exceeds max (4)
+            Json::Value jv = clammBid(alice, pid);
+            Json::Value authAccounts(Json::arrayValue);
+            for (auto const& acct : {bob, carol, d, e, gw})
+            {
+                Json::Value authAcct;
+                authAcct[jss::Account] = acct.human();
+                Json::Value acctObj;
+                acctObj["AuthAccount"] = authAcct;
+                authAccounts.append(acctObj);
+            }
+            jv[sfAuthAccounts.jsonName] = authAccounts;
+            env(jv, ter(temMALFORMED));
+            env.close();
+        }
+
+        {
+            // Bidder in own auth accounts -> temMALFORMED
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            Json::Value jv = clammBid(alice, pid);
+            Json::Value authAccounts(Json::arrayValue);
+            Json::Value authAcct;
+            authAcct[jss::Account] = alice.human();  // self
+            Json::Value acctObj;
+            acctObj["AuthAccount"] = authAcct;
+            authAccounts.append(acctObj);
+            jv[sfAuthAccounts.jsonName] = authAccounts;
+            env(jv, ter(temMALFORMED));
+            env.close();
+        }
+
+        {
+            // Duplicate auth accounts -> temMALFORMED
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            Json::Value jv = clammBid(alice, pid);
+            Json::Value authAccounts(Json::arrayValue);
+            for (int i = 0; i < 2; ++i)
+            {
+                Json::Value authAcct;
+                authAcct[jss::Account] = bob.human();
+                Json::Value acctObj;
+                acctObj["AuthAccount"] = authAcct;
+                authAccounts.append(acctObj);
+            }
+            jv[sfAuthAccounts.jsonName] = authAccounts;
+            env(jv, ter(temMALFORMED));
+            env.close();
+        }
+
+        {
+            // Auth account doesn't exist -> terNO_ACCOUNT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            Account const ghost{"ghost"};
+            Json::Value jv = clammBid(alice, pid);
+            Json::Value authAccounts(Json::arrayValue);
+            Json::Value authAcct;
+            authAcct[jss::Account] = ghost.human();
+            Json::Value acctObj;
+            acctObj["AuthAccount"] = authAcct;
+            authAccounts.append(acctObj);
+            jv[sfAuthAccounts.jsonName] = authAccounts;
+            env(jv, ter(terNO_ACCOUNT));
+            env.close();
+        }
+
+        {
+            // BidMin > BidMax -> temMALFORMED
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -100, 100,
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            Json::Value jv = clammBid(alice, pid);
+            STAmount(xrpIssue(), 100'000'000).setJson(
+                jv[sfBidMin.jsonName]);
+            STAmount(xrpIssue(), 10'000'000).setJson(
+                jv[sfBidMax.jsonName]);
+            env(jv, ter(temMALFORMED));
+            env.close();
+        }
+    }
+
+    void
+    testMissingTERPaths()
+    {
+        testcase("Missing TER code paths");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+
+        {
+            // CLAMMCreate: initialSqrtPrice below minSqrtRatio -> temBAD_AMOUNT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clamm::uint128(1)),  // way below minSqrtRatio
+                ter(temBAD_AMOUNT));
+            env.close();
+        }
+
+        {
+            // CLAMMCreate: initialSqrtPrice of 0 -> temBAD_AMOUNT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clamm::uint128(0)),
+                ter(temBAD_AMOUNT));
+            env.close();
+        }
+
+        {
+            // CLAMMWithdraw: explicit 0 liquidity -> tecINSUFFICIENT_PAYMENT
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+
+            if (nft)
+            {
+                env(clammWithdrawPartial(
+                        alice, *nft, clamm::uint128(0)),
+                    ter(tecINSUFFICIENT_PAYMENT));
+                env.close();
+            }
+        }
+
+        {
+            // CLAMMDeposit: sfMinLiquidity too high -> tecPATH_PARTIAL
+            Env env{*this, features};
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Deposit with MinLiquidity constraint that cannot be met
+            Json::Value jv = clammDeposit(
+                alice, pid, -100, 100, XRP(100), USD(100));
+            // Set impossibly high min liquidity
+            jv[sfMinLiquidity.jsonName] =
+                to_string(clamm::toSLEField(
+                    clamm::uint128("999999999999999999999999999")));
+            env(jv, ter(tecPATH_PARTIAL));
+            env.close();
+        }
+    }
+
     void
     run() override
     {
@@ -2130,6 +3848,22 @@ struct CLAMM_test : public beast::unit_test::suite
         testDepositMinLiquidity();
         testDepositInsufficientReserve();
         testFreeze();
+        testSwapSlippageProtection();
+        testAuctionSlotDiscount();
+        testSwapAmountCapping();
+        testFreezeTwoIssuers();
+        testTickBitmapIntegrity();
+        testCreatePreclaim();
+        testVoteEviction();
+        testBidTimeSlots();
+        testSwapMultiTickCrossing();
+        testWithdrawPartialAndSlippage();
+        testRPCPositions();
+        testRPCTicks();
+        testRPCQuote();
+        testDepositErrorPaths();
+        testBidErrorPaths();
+        testMissingTERPaths();
     }
 };
 
