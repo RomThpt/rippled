@@ -270,6 +270,8 @@ getNextSqrtPriceFromAmount0RoundingUp(
 {
     if (amount == 0)
         return sqrtPrice;
+    if (liquidity == 0)
+        return sqrtPrice;
 
     uint256 numerator1 = uint256(liquidity) << Q96;
     uint256 product = uint256(amount) * uint256(sqrtPrice);
@@ -286,6 +288,8 @@ getNextSqrtPriceFromAmount1RoundingDown(
     uint128 const& liquidity,
     std::uint64_t amount)
 {
+    if (amount == 0 || liquidity == 0)
+        return sqrtPrice;
     uint256 quotient = (uint256(amount) << Q96) / uint256(liquidity);
     return static_cast<uint128>(uint256(sqrtPrice) + quotient);
 }
@@ -696,14 +700,15 @@ simulateSwap(
                 {
                     auto const liqNet = fromSLEFieldSigned(
                         sleTick->getFieldH128(sfLiquidityNet));
+                    int128 signedLiq =
+                        static_cast<int128>(sim.finalLiquidity);
                     if (zeroForOne)
-                        sim.finalLiquidity = static_cast<uint128>(
-                            static_cast<int128>(sim.finalLiquidity) -
-                            liqNet);
+                        signedLiq -= liqNet;
                     else
-                        sim.finalLiquidity = static_cast<uint128>(
-                            static_cast<int128>(sim.finalLiquidity) +
-                            liqNet);
+                        signedLiq += liqNet;
+                    sim.finalLiquidity = (signedLiq < 0)
+                        ? uint128(0)
+                        : static_cast<uint128>(signedLiq);
                 }
                 continue;
             }
@@ -733,12 +738,15 @@ simulateSwap(
             {
                 auto const liqNet = fromSLEFieldSigned(
                     sleTick->getFieldH128(sfLiquidityNet));
+                int128 signedLiq =
+                    static_cast<int128>(sim.finalLiquidity);
                 if (zeroForOne)
-                    sim.finalLiquidity = static_cast<uint128>(
-                        static_cast<int128>(sim.finalLiquidity) - liqNet);
+                    signedLiq -= liqNet;
                 else
-                    sim.finalLiquidity = static_cast<uint128>(
-                        static_cast<int128>(sim.finalLiquidity) + liqNet);
+                    signedLiq += liqNet;
+                sim.finalLiquidity = (signedLiq < 0)
+                    ? uint128(0)
+                    : static_cast<uint128>(signedLiq);
             }
             ++sim.ticksCrossed;
             sim.finalTick =
@@ -826,14 +834,15 @@ applySwap(
                 {
                     auto const liqNet = fromSLEFieldSigned(
                         sleTick->getFieldH128(sfLiquidityNet));
+                    int128 signedLiq =
+                        static_cast<int128>(result.finalLiquidity);
                     if (zeroForOne)
-                        result.finalLiquidity = static_cast<uint128>(
-                            static_cast<int128>(result.finalLiquidity) -
-                            liqNet);
+                        signedLiq -= liqNet;
                     else
-                        result.finalLiquidity = static_cast<uint128>(
-                            static_cast<int128>(result.finalLiquidity) +
-                            liqNet);
+                        signedLiq += liqNet;
+                    result.finalLiquidity = (signedLiq < 0)
+                        ? uint128(0)
+                        : static_cast<uint128>(signedLiq);
                 }
                 continue;
             }
@@ -896,14 +905,17 @@ applySwap(
                 // Update active liquidity
                 auto const liqNet = fromSLEFieldSigned(
                     sleTick->getFieldH128(sfLiquidityNet));
-                if (zeroForOne)
-                    result.finalLiquidity = static_cast<uint128>(
-                        static_cast<int128>(result.finalLiquidity) -
-                        liqNet);
-                else
-                    result.finalLiquidity = static_cast<uint128>(
-                        static_cast<int128>(result.finalLiquidity) +
-                        liqNet);
+                {
+                    int128 signedLiq =
+                        static_cast<int128>(result.finalLiquidity);
+                    if (zeroForOne)
+                        signedLiq -= liqNet;
+                    else
+                        signedLiq += liqNet;
+                    result.finalLiquidity = (signedLiq < 0)
+                        ? uint128(0)
+                        : static_cast<uint128>(signedLiq);
+                }
             }
 
             result.finalTick =

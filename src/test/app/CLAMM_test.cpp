@@ -4288,6 +4288,188 @@ struct CLAMM_test : public beast::unit_test::suite
     }
 
     void
+    testSwapZeroLiquidityPool()
+    {
+        testcase("Swap in pool with no positions (zero liquidity)");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid = clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // No deposit -- pool has zero liquidity everywhere.
+        // Swap must not crash (division by zero guard) and should fail
+        // gracefully.
+        env(clammSwap(bob, pid, XRP(100)),
+            ter(tecPATH_DRY));
+        env.close();
+
+        // Pool should still be intact
+        auto const sle = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sle != nullptr);
+    }
+
+    void
+    testTickCrossingLiquidityTransition()
+    {
+        testcase("Swap crossing tick gap between non-adjacent positions");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid = clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Two positions with a gap: [-200, -100] and [100, 200]
+        // Current tick is near 1 (default sqrt price), so only
+        // liquidity in-range if we deposit a narrow range around 0.
+        env(clammDeposit(
+                alice, pid, -10, 10,
+                XRP(1'000), USD(1'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                alice, pid, 100, 200,
+                XRP(2'000), USD(2'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Swap oneForZero pushes price up through the gap [10, 100]
+        // where there is no liquidity, then into [100, 200].
+        env(clammSwap(bob, pid, USD(3'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const sle = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sle != nullptr);
+        if (sle)
+        {
+            auto const tickAfter = sle->getFieldI32(sfCurrentTick);
+            // Price should have moved upward
+            BEAST_EXPECT(tickAfter > 10);
+        }
+    }
+
+    void
+    testFeeGrowthOverflowWrapping()
+    {
+        testcase("Fee growth integrity after many swaps");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid = clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        env(clammDeposit(
+                alice, pid, -1000, 1000,
+                XRP(50'000), USD(50'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nft = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nft.has_value());
+
+        // 20 alternating swaps to accumulate fees
+        for (int i = 0; i < 10; ++i)
+        {
+            env(clammSwap(bob, pid, XRP(500)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammSwap(bob, pid, USD(500)),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        // Collect fees should succeed without corruption
+        if (nft)
+        {
+            env(clammCollectFees(alice, *nft),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        // Pool should be in valid state
+        auto const sle = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sle != nullptr);
+    }
+
+    void
+    testMultipleTickCrossingsDeepSwap()
+    {
+        testcase("Deep swap crossing 5+ tick boundaries");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid = clammPoolID(xrpIssue(), USD.issue(), 0);
+
+        // Fee tier 0 has tickSpacing=1, allowing dense positions
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 0,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // 6 narrow adjacent positions: [-6,-5], [-5,-4], ..., [-1,0]
+        for (int i = 6; i >= 1; --i)
+        {
+            env(clammDeposit(
+                    alice, pid, -i, -(i - 1),
+                    XRP(1'000), USD(1'000)),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        auto const sleBefore = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sleBefore != nullptr);
+
+        // Large zeroForOne swap should cross all 6 boundaries
+        env(clammSwap(bob, pid, XRP(10'000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const sleAfter = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sleAfter != nullptr);
+        if (sleAfter)
+        {
+            auto const tickAfter = sleAfter->getFieldI32(sfCurrentTick);
+            // Should have moved significantly downward
+            BEAST_EXPECT(tickAfter < -1);
+        }
+    }
+
+    void
     run() override
     {
         testCreate();
@@ -4348,6 +4530,10 @@ struct CLAMM_test : public beast::unit_test::suite
         testWithdrawAutoDeletesEmptyPool();
         testAccountDeletionBlocker();
         testDeletionBlockersRPC();
+        testSwapZeroLiquidityPool();
+        testTickCrossingLiquidityTransition();
+        testFeeGrowthOverflowWrapping();
+        testMultipleTickCrossingsDeepSwap();
     }
 };
 

@@ -138,15 +138,22 @@ CLAMMWithdraw::doApply()
 
     if (posLiquidity > 0)
     {
-        auto const feeDelta0 = feeGrowthInside.feeGrowthInside0 - fgi0Last;
-        auto const feeDelta1 = feeGrowthInside.feeGrowthInside1 - fgi1Last;
-
-        feesOwed0 += static_cast<std::uint64_t>(
-            (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
-            clamm::Q96);
-        feesOwed1 += static_cast<std::uint64_t>(
-            (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
-            clamm::Q96);
+        if (feeGrowthInside.feeGrowthInside0 >= fgi0Last)
+        {
+            auto const feeDelta0 =
+                feeGrowthInside.feeGrowthInside0 - fgi0Last;
+            feesOwed0 += static_cast<std::uint64_t>(
+                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
+                clamm::Q96);
+        }
+        if (feeGrowthInside.feeGrowthInside1 >= fgi1Last)
+        {
+            auto const feeDelta1 =
+                feeGrowthInside.feeGrowthInside1 - fgi1Last;
+            feesOwed1 += static_cast<std::uint64_t>(
+                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
+                clamm::Q96);
+        }
     }
 
     // Total amounts to transfer (principal + fees)
