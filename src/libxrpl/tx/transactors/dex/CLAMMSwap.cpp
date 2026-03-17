@@ -265,7 +265,12 @@ CLAMMSwap::doApply()
         }
     }
 
-    // Transfer input tokens from user to pool
+    // Transfer input tokens from user to pool.
+    // SECURITY: accountSend is called before pool state updates below.
+    // This ordering is safe because XRPL transactions are atomic (no
+    // external callbacks or reentrancy). All operations execute within a
+    // Sandbox (sb); if any transfer fails, the function returns early and
+    // sb is not applied, rolling back all changes atomically.
     {
         if (swapResult.amountIn > 0)
         {

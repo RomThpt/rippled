@@ -191,6 +191,10 @@ getAmount0ForLiquidity(
         return 0;
 
     auto result = numerator / denominator;
+    // SECURITY: Saturation to uint64::max is intentional. Large liquidity
+    // amounts with extreme price ranges can produce values exceeding 64 bits.
+    // Clamping matches Uniswap V3's getAmount0Delta behavior -- callers
+    // handle the saturated value safely (deposit caps, swap step limits).
     if (result > std::numeric_limits<std::uint64_t>::max())
         return std::numeric_limits<std::uint64_t>::max();
     return static_cast<std::uint64_t>(result);
@@ -207,6 +211,8 @@ getAmount1ForLiquidity(
     uint256 result =
         uint256(liquidity) * uint256(upper - lower) / q96Scale();
 
+    // SECURITY: Same saturation pattern as getAmount0ForLiquidity above.
+    // Prevents overflow when converting uint256 intermediate to uint64 output.
     if (result > std::numeric_limits<std::uint64_t>::max())
         return std::numeric_limits<std::uint64_t>::max();
     return static_cast<std::uint64_t>(result);
@@ -947,6 +953,10 @@ extractAmount(STAmount const& amt)
     auto const exponent = amt.exponent();
     int const e = exponent + 6;
 
+    // SECURITY: Loop cap (i < 20) is safe because STAmount normalizes IOU
+    // mantissa/exponent such that exponent is bounded to [-96, 80]. With the
+    // +6 offset, e ranges from [-90, 86], but multiplication overflow is
+    // caught by the pre-check before each *=10 step.
     if (e >= 0)
     {
         std::uint64_t result = mantissa;
@@ -988,6 +998,14 @@ makeSTAmount(Issue const& issue, std::uint64_t amount)
 }
 
 // ---- Fee Growth Inside ----
+// SECURITY: All subtractions in this function (feeGrowthGlobal - fgo,
+// and the final feeGrowthGlobal - below - above) use unsigned uint128
+// wrapping arithmetic intentionally. This is the same modular arithmetic
+// pattern as Uniswap V3's getFeeGrowthInside. The values wrap around on
+// underflow, and the difference remains correct as long as the global
+// counter has not wrapped more than once relative to a position's
+// last-collected snapshot -- which is guaranteed because fee growth
+// cannot exceed 2^128 per position lifetime.
 
 FeeGrowthInside
 computeFeeGrowthInside(
