@@ -192,8 +192,14 @@ CLAMMCollectFees::doApply()
         remaining0 = totalFees0 - fees0;
         remaining1 = totalFees1 - fees1;
 
-        slePos->setFieldU64(sfTokensOwed0, remaining0);
-        slePos->setFieldU64(sfTokensOwed1, remaining1);
+        if (remaining0 > 0)
+            slePos->setFieldU64(sfTokensOwed0, remaining0);
+        else if (slePos->isFieldPresent(sfTokensOwed0))
+            slePos->makeFieldAbsent(sfTokensOwed0);
+        if (remaining1 > 0)
+            slePos->setFieldU64(sfTokensOwed1, remaining1);
+        else if (slePos->isFieldPresent(sfTokensOwed1))
+            slePos->makeFieldAbsent(sfTokensOwed1);
     }
 
     slePos->setFieldH256(sfPreviousTxnID, ctx_.tx.getTransactionID());

@@ -161,11 +161,14 @@ CLAMMCreate::doApply()
     sleClamm->setFieldH128(
         sfSqrtPrice, clamm::toSLEField(initialSqrtPrice));
 
-    // Insert into owner directory
+    // Insert into pseudo-account's owner directory (matches AMM pattern).
+    // The pool SLE lives in the pseudo-account's directory, not the
+    // creator's. CLAMMDelete and CLAMMWithdraw auto-delete both clean up
+    // from the pseudo-account's directory.
     auto page = view().dirInsert(
-        keylet::ownerDir(accountID),
+        keylet::ownerDir(ammAccountID),
         clammKeylet,
-        describeOwnerDir(accountID));
+        describeOwnerDir(ammAccountID));
     if (!page)
         return tecDIR_FULL;
     sleClamm->setFieldU64(sfOwnerNode, *page);

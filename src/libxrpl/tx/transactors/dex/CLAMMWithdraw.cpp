@@ -372,18 +372,16 @@ CLAMMWithdraw::doApply()
             j_,
             512);
 
-        if (!hasNonTrustEntries && delTer == tesSUCCESS &&
-            dirIsEmpty(sb, poolDirKeylet))
+        if (!hasNonTrustEntries && delTer == tesSUCCESS)
         {
-            // Pool directory is empty. Try to delete the pool.
-            // sfOwnerNode stores the page in the creator's directory.
-            // Only proceed if withdrawer is the creator (dirRemove
-            // succeeds). Otherwise leave for explicit CLAMMDelete.
+            // No ticks or bitmaps remain. The only directory entry left
+            // should be the CLAMM SLE itself (in the pseudo-account's
+            // directory since CLAMMCreate). Remove it and delete the pool.
             auto const clammOwnerNode =
                 sleClamm->getFieldU64(sfOwnerNode);
 
             if (sb.dirRemove(
-                    keylet::ownerDir(account),
+                    keylet::ownerDir(ammAccountID),
                     clammOwnerNode,
                     clammKeylet,
                     false))
@@ -396,12 +394,6 @@ CLAMMWithdraw::doApply()
                 sb.erase(sleClamm);
                 if (sleAMMRoot)
                     sb.erase(sleAMMRoot);
-
-                adjustOwnerCount(
-                    sb,
-                    sb.peek(keylet::account(account)),
-                    -1,
-                    j_);
 
                 poolDeleted = true;
             }

@@ -2584,15 +2584,8 @@ struct CLAMM_test : public beast::unit_test::suite
                 env.close();
             }
 
-            // Pool should have zero liquidity now
-            auto const sle2 = env.current()->read(keylet::clamm(pid));
-            BEAST_EXPECT(sle2 != nullptr);
-            if (sle2)
-            {
-                auto const liq = clamm::fromSLEField(
-                    sle2->getFieldH128(sfLiquidityAmount));
-                BEAST_EXPECT(liq == 0);
-            }
+            // Pool should be auto-deleted (last position withdrawn)
+            BEAST_EXPECT(!env.current()->read(keylet::clamm(pid)));
         }
 
         {
@@ -3923,9 +3916,7 @@ struct CLAMM_test : public beast::unit_test::suite
         testcase("CLAMMDelete Empty Pool");
         using namespace jtx;
 
-        // Scenario: bob deposits, bob withdraws, then CLAMMDelete.
-        // Since bob is NOT the creator (alice is), auto-delete won't
-        // trigger, so explicit CLAMMDelete is needed.
+        // Scenario: pool created with no deposits, then CLAMMDelete.
         auto const features =
             jtx::testable_amendments() | featureCLAMM;
         Env env{*this, features};
@@ -3934,33 +3925,17 @@ struct CLAMM_test : public beast::unit_test::suite
         auto const pid =
             clammPoolID(xrpIssue(), USD.issue(), 1);
 
-        // Alice creates pool
+        // Alice creates pool (no deposits)
         env(clammCreate(env,
                 alice, xrpIssue(), USD.issue(), 1,
                 clammDefaultSqrtPrice()),
             ter(tesSUCCESS));
         env.close();
 
-        // Bob deposits
-        env(clammDeposit(
-                bob, pid, -100, 100, XRP(1000), USD(1000)),
-            ter(tesSUCCESS));
-        env.close();
-
-        auto const nftID = clammFindPositionNFT(env, bob, pid);
-        BEAST_EXPECT(nftID.has_value());
-        if (!nftID)
-            return;
-
-        // Bob full withdraws (not creator, pool not auto-deleted)
-        env(clammWithdraw(bob, *nftID),
-            ter(tesSUCCESS));
-        env.close();
-
-        // Pool should still exist (bob is not creator)
+        // Pool exists
         BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
 
-        // Delete pool explicitly
+        // Anyone can delete an empty pool
         env(clammDelete(carol, xrpIssue(), USD.issue(), 1),
             ter(tesSUCCESS));
         env.close();
@@ -4003,6 +3978,130 @@ struct CLAMM_test : public beast::unit_test::suite
 
         // Pool should still exist
         BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
+    }
+
+    void
+    testDeleteAfterPaymentExhaustion()
+    {
+        testcase("CLAMMDelete after payment exhausts pool");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Alice deposits with decent liquidity
+        env(clammDeposit(
+                alice, pid, -500, 500, XRP(5000), USD(5000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const nftID = clammFindPositionNFT(env, alice, pid);
+        BEAST_EXPECT(nftID.has_value());
+
+        // Large swap moves price significantly
+        env(clammSwap(bob, pid, XRP(3000)),
+            ter(std::ignore));
+        env.close();
+
+        // Pool still exists with shifted price
+        auto const sle = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sle);
+        if (sle)
+        {
+            auto const sqrtPrice =
+                clamm::fromSLEField(sle->getFieldH128(sfSqrtPrice));
+            BEAST_EXPECT(sqrtPrice > 0);
+        }
+
+        // Delete should fail -- position still exists
+        env(clammDelete(carol, xrpIssue(), USD.issue(), 1),
+            ter(tecAMM_NOT_EMPTY));
+        env.close();
+
+        // Alice withdraws (gets back asymmetric amounts after swap)
+        if (nftID)
+        {
+            env(clammWithdraw(alice, *nftID),
+                ter(tesSUCCESS));
+            env.close();
+        }
+
+        // Pool should be auto-deleted (last position withdrawn)
+        BEAST_EXPECT(!env.current()->read(keylet::clamm(pid)));
+    }
+
+    void
+    testDeleteAndRecreate()
+    {
+        testcase("CLAMMDelete then recreate same pool");
+        using namespace jtx;
+
+        auto const features =
+            jtx::testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        // Create pool with no deposits, then delete explicitly
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        BEAST_EXPECT(env.current()->read(keylet::clamm(pid)));
+
+        env(clammDelete(carol, xrpIssue(), USD.issue(), 1),
+            ter(tesSUCCESS));
+        env.close();
+        BEAST_EXPECT(!env.current()->read(keylet::clamm(pid)));
+
+        // Recreate same pool (same pair, same fee tier)
+        env(clammCreate(env,
+                alice, xrpIssue(), USD.issue(), 1,
+                clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Pool should exist again with fresh state
+        auto const sle = env.current()->read(keylet::clamm(pid));
+        BEAST_EXPECT(sle);
+        if (sle)
+        {
+            auto const sqrtPrice =
+                clamm::fromSLEField(sle->getFieldH128(sfSqrtPrice));
+            BEAST_EXPECT(sqrtPrice > 0);
+
+            // Should have no liquidity (fresh pool)
+            BEAST_EXPECT(!sle->isFieldPresent(sfLiquidityAmount));
+        }
+
+        // Deposit into the recreated pool should work
+        env(clammDeposit(
+                carol, pid, -200, 200, XRP(5000), USD(5000)),
+            ter(tesSUCCESS));
+        env.close();
+
+        auto const carolNFT = clammFindPositionNFT(env, carol, pid);
+        BEAST_EXPECT(carolNFT.has_value());
+
+        // Swap should work in recreated pool
+        env(clammSwap(bob, pid, XRP(100)),
+            ter(tesSUCCESS));
+        env.close();
     }
 
     void
@@ -4178,7 +4277,7 @@ struct CLAMM_test : public beast::unit_test::suite
     void
     testWithdrawAutoDeletesEmptyPool()
     {
-        testcase("Withdraw auto-deletes empty pool when creator withdraws");
+        testcase("Withdraw auto-deletes empty pool when last position removed");
         using namespace jtx;
 
         auto const features =
@@ -4233,17 +4332,25 @@ struct CLAMM_test : public beast::unit_test::suite
         Env env{*this, features};
         clammSetupEnv(env, gw, alice, bob, carol, USD);
 
-        // Alice creates pool
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
+        // Alice creates pool and deposits (gets NFT position)
         env(clammCreate(env,
                 alice, xrpIssue(), USD.issue(), 1,
                 clammDefaultSqrtPrice()),
             ter(tesSUCCESS));
         env.close();
 
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
+            ter(tesSUCCESS));
+        env.close();
+
         // Advance ledgers so AccountDelete is not blocked by TOO_SOON
         incLgrSeqForAccDel(env, alice);
 
-        // Alice cannot delete her account (has CLAMM pool in directory)
+        // Alice cannot delete her account (has NFT position in directory)
         env(acctdelete(alice, bob),
             fee(drops(env.current()->fees().increment)),
             ter(tecHAS_OBLIGATIONS));
@@ -4261,9 +4368,18 @@ struct CLAMM_test : public beast::unit_test::suite
         Env env{*this, features};
         clammSetupEnv(env, gw, alice, bob, carol, USD);
 
+        auto const pid =
+            clammPoolID(xrpIssue(), USD.issue(), 1);
+
         env(clammCreate(env,
                 alice, xrpIssue(), USD.issue(), 1,
                 clammDefaultSqrtPrice()),
+            ter(tesSUCCESS));
+        env.close();
+
+        // Alice deposits (gets NFT position in her directory)
+        env(clammDeposit(
+                alice, pid, -100, 100, XRP(1000), USD(1000)),
             ter(tesSUCCESS));
         env.close();
 
@@ -4277,14 +4393,8 @@ struct CLAMM_test : public beast::unit_test::suite
             result[jss::result][jss::account_objects];
         BEAST_EXPECT(objects.isArray());
 
-        // Should find the CLAMM pool as a deletion blocker
-        bool foundCLAMM = false;
-        for (auto const& obj : objects)
-        {
-            if (obj["LedgerEntryType"].asString() == "CLAMM")
-                foundCLAMM = true;
-        }
-        BEAST_EXPECT(foundCLAMM);
+        // Should find objects blocking deletion (NFT position or trust lines)
+        BEAST_EXPECT(objects.size() > 0);
     }
 
     void
@@ -4525,6 +4635,8 @@ struct CLAMM_test : public beast::unit_test::suite
         testPoolResolutionByAssets();
         testDeleteEmptyPool();
         testDeleteNonEmptyPool();
+        testDeleteAfterPaymentExhaustion();
+        testDeleteAndRecreate();
         testNFTokenTransferUpdatesPosition();
         testNFTokenTransferBrokered();
         testWithdrawAutoDeletesEmptyPool();

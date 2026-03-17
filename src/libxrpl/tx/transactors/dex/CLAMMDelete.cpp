@@ -143,23 +143,12 @@ CLAMMDelete::doApply()
     }
 
     // All directory entries cleared. Now remove the pool SLE and account.
+    // The CLAMM SLE is in the pseudo-account's owner directory (inserted
+    // there by CLAMMCreate). sfOwnerNode stores the page within that directory.
     auto const ownerNode = sleClamm->getFieldU64(sfOwnerNode);
-
-    // Remove CLAMM SLE from creator's owner directory.
-    // The OwnerNode stored on the CLAMM SLE points to the creator's directory.
-    // However, the CLAMM SLE is also in the pseudo-account's directory (which
-    // we just cleaned up). We need to find the creator and remove from their dir.
-    // The CLAMM SLE's sfOwnerNode refers to the creator's dir page.
-    // Find creator by reading the pseudo-account's AccountRoot parent.
-    // Actually, the CLAMM SLE was inserted into the creator's owner dir in
-    // CLAMMCreate, so sfOwnerNode is the page in the creator's directory.
-    // We don't store the creator's AccountID on the CLAMM SLE directly.
-    // The pattern from AMMDelete uses sfOwnerNode on the AMM SLE.
     if (!sb.dirRemove(
             ownerDirKeylet, ownerNode, sleClamm->key(), false))
     {
-        // The pool-account owner dir should already be empty at this point,
-        // but try to clean up. If it fails, it's not critical.
         JLOG(j_.debug())
             << "CLAMM Delete: dir remove failed (may be already empty).";
     }
