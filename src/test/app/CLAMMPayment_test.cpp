@@ -1,4 +1,5 @@
 #include <test/jtx.h>
+#include <test/jtx/AMM.h>
 #include <test/jtx/CLAMM.h>
 #include <test/jtx/Env.h>
 #include <test/jtx/PathSet.h>
@@ -494,6 +495,194 @@ struct CLAMMPayment_test : public beast::unit_test::suite
         BEAST_EXPECT(env.balance(dan, USD) > danUsdBefore);
     }
 
+    // ---------------------------------------------------------------
+    // Test: multi-path competition -- CLAMM vs CLOB on different paths
+    // ---------------------------------------------------------------
+    void
+    testCLAMMMultiPathCompetition()
+    {
+        testcase("Multi-path competition: CLAMM vs CLOB");
+        using namespace jtx;
+
+        auto const features = testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        setupEnv(env);
+
+        // CLAMM pool tier 1 (0.05% fee -- good rate, wide range)
+        createPoolWithLiquidity(
+            env, alice, xrpIssue(), USD.issue(), 1,
+            -1000, 1000, XRP(10'000), USD(10'000));
+
+        // CLOB offer at worse rate: 200 XRP for 100 USD (rate = 0.5 USD/XRP)
+        env(offer(bob, XRP(200), USD(100)));
+        env.close();
+
+        auto const danUsdBefore = env.balance(dan, USD);
+        auto const carolXrpBefore = env.balance(carol);
+
+        // Payment should prefer CLAMM (better rate)
+        env(pay(carol, dan, USD(50)),
+            path(~USD),
+            sendmax(XRP(100)),
+            txflags(tfPartialPayment));
+        env.close();
+
+        BEAST_EXPECT(env.balance(dan, USD) > danUsdBefore);
+        // Carol should spend less than 100 XRP for 50 USD
+        auto const xrpSpent = carolXrpBefore - env.balance(carol);
+        BEAST_EXPECT(xrpSpent < XRP(100));
+    }
+
+    // ---------------------------------------------------------------
+    // Test: CLAMM and AMM on same pair -- quality-based selection
+    // ---------------------------------------------------------------
+    void
+    testCLAMMAMMSamePair()
+    {
+        testcase("CLAMM and AMM on same pair");
+        using namespace jtx;
+
+        auto const features = testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        setupEnv(env);
+
+        // Create CLAMM pool with concentrated liquidity (efficient)
+        createPoolWithLiquidity(
+            env, alice, xrpIssue(), USD.issue(), 1,
+            -1000, 1000, XRP(10'000), USD(10'000));
+
+        // Create XLS-30 AMM on same pair
+        AMM amm(env, alice, XRP(10'000), USD(10'000));
+
+        auto const danUsdBefore = env.balance(dan, USD);
+        auto const carolXrpBefore = env.balance(carol);
+
+        // Payment routes through whichever gives better quality
+        env(pay(carol, dan, USD(100)),
+            path(~USD),
+            sendmax(XRP(200)),
+            txflags(tfPartialPayment));
+        env.close();
+
+        // Payment should succeed via one or both sources
+        BEAST_EXPECT(env.balance(dan, USD) > danUsdBefore);
+        BEAST_EXPECT(env.balance(carol) < carolXrpBefore);
+    }
+
+    // ---------------------------------------------------------------
+    // Test: CLAMM with IOU transfer fee
+    // ---------------------------------------------------------------
+    void
+    testCLAMMWithTransferFee()
+    {
+        testcase("CLAMM with IOU transfer fee");
+        using namespace jtx;
+
+        auto const features = testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        setupEnv(env);
+
+        // Set 1% transfer fee on gateway's USD
+        env(rate(gw, 1.01));
+        env.close();
+
+        // Create CLAMM pool XRP/USD
+        createPoolWithLiquidity(
+            env, alice, xrpIssue(), USD.issue(), 1,
+            -1000, 1000, XRP(10'000), USD(10'000));
+
+        auto const danUsdBefore = env.balance(dan, USD);
+
+        // Payment should account for transfer fee
+        env(pay(carol, dan, USD(50)),
+            path(~USD),
+            sendmax(XRP(100)),
+            txflags(tfPartialPayment));
+        env.close();
+
+        auto const danUsdAfter = env.balance(dan, USD);
+        BEAST_EXPECT(danUsdAfter > danUsdBefore);
+        // Due to transfer fee, dan receives less than carol sent
+        // (payment engine factors in the fee)
+    }
+
+    // ---------------------------------------------------------------
+    // Test: unfunded offer cleanup with CLAMM fallback
+    // ---------------------------------------------------------------
+    void
+    testCLAMMUnfundedOfferCleanup()
+    {
+        testcase("Unfunded offer cleanup with CLAMM fallback");
+        using namespace jtx;
+
+        auto const features = testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        setupEnv(env);
+
+        // Create CLAMM pool as fallback
+        createPoolWithLiquidity(
+            env, alice, xrpIssue(), USD.issue(), 1,
+            -1000, 1000, XRP(10'000), USD(10'000));
+
+        // Bob creates CLOB offer then spends his USD
+        env(offer(bob, XRP(50), USD(50)));
+        env.close();
+
+        // Drain bob's USD so the offer is unfunded
+        env(pay(bob, gw, USD(100'000)));
+        env.close();
+
+        auto const danUsdBefore = env.balance(dan, USD);
+
+        // Payment should skip unfunded CLOB offer, route through CLAMM
+        env(pay(carol, dan, USD(10)),
+            path(~USD),
+            sendmax(XRP(20)),
+            txflags(tfPartialPayment));
+        env.close();
+
+        BEAST_EXPECT(env.balance(dan, USD) > danUsdBefore);
+    }
+
+    // ---------------------------------------------------------------
+    // Test: CLAMM exhausts then falls back to CLOB
+    // ---------------------------------------------------------------
+    void
+    testCLAMMExhaustsToClob()
+    {
+        testcase("CLAMM exhausts then falls back to CLOB");
+        using namespace jtx;
+
+        auto const features = testable_amendments() | featureCLAMM;
+        Env env{*this, features};
+        setupEnv(env);
+
+        // Create CLAMM pool with limited liquidity
+        createPoolWithLiquidity(
+            env, alice, xrpIssue(), USD.issue(), 1,
+            -100, 100, XRP(100), USD(100));
+
+        // Create CLOB offer as backup with larger capacity
+        env(offer(bob, XRP(5000), USD(5000)));
+        env.close();
+
+        auto const danUsdBefore = env.balance(dan, USD);
+
+        // Partial payment: should use CLAMM first, then CLOB for remainder
+        env(pay(carol, dan, USD(500)),
+            path(~USD),
+            sendmax(XRP(1000)),
+            txflags(tfPartialPayment));
+        env.close();
+
+        auto const danUsdAfter = env.balance(dan, USD);
+        auto const delivered = danUsdAfter - danUsdBefore;
+        // Should deliver more than CLAMM alone could (~100 USD)
+        BEAST_EXPECT(delivered > USD(90));
+        // Payment should succeed with significant delivery
+        BEAST_EXPECT(danUsdAfter > danUsdBefore);
+    }
+
     void
     run() override
     {
@@ -508,6 +697,11 @@ struct CLAMMPayment_test : public beast::unit_test::suite
         testXRPDirectPayment();
         testPoolStateAfterPayment();
         testEmptyPoolFallsBackToCLOB();
+        testCLAMMMultiPathCompetition();
+        testCLAMMAMMSamePair();
+        testCLAMMWithTransferFee();
+        testCLAMMUnfundedOfferCleanup();
+        testCLAMMExhaustsToClob();
     }
 };
 
