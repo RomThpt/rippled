@@ -183,9 +183,11 @@ getAmount0ForLiquidity(
     if (lower == 0)
         return 0;
 
-    uint256 numerator =
-        uint256(liquidity) * q96Scale() * uint256(upper - lower);
-    uint256 denominator = uint256(lower) * uint256(upper);
+    // Use uint512 for intermediate to avoid overflow:
+    // liquidity(128) * q96(96) * delta(160) can reach 384 bits.
+    uint512 numerator =
+        uint512(liquidity) * uint512(q96Scale()) * uint512(upper - lower);
+    uint512 denominator = uint512(lower) * uint512(upper);
 
     if (denominator == 0)
         return 0;
@@ -279,13 +281,14 @@ getNextSqrtPriceFromAmount0RoundingUp(
     if (liquidity == 0)
         return sqrtPrice;
 
-    uint256 numerator1 = uint256(liquidity) << Q96;
-    uint256 product = uint256(amount) * uint256(sqrtPrice);
-    uint256 denominator = numerator1 + product;
+    // Use uint512 for intermediate: numerator1(224) * sqrtPrice(160) = 384 bits.
+    uint512 numerator1 = uint512(liquidity) << Q96;
+    uint512 product = uint512(amount) * uint512(sqrtPrice);
+    uint512 denominator = numerator1 + product;
     if (denominator == 0)
         return sqrtPrice;
     return static_cast<uint128>(
-        (numerator1 * uint256(sqrtPrice) + denominator - 1) / denominator);
+        (numerator1 * uint512(sqrtPrice) + denominator - 1) / denominator);
 }
 
 static uint128
@@ -430,7 +433,7 @@ makeBitMask256(int bit)
 
 }  // namespace
 
-void
+TER
 flipTickBitmap(
     ApplyView& view,
     base_uint<256> const& poolID,
@@ -457,7 +460,7 @@ flipTickBitmap(
             bitmapKeylet,
             describeOwnerDir(poolAccount));
         if (!page)
-            return;
+            return tecDIR_FULL;
         sleBitmap->setFieldU64(sfOwnerNode, *page);
         sleBitmap->setFieldH256(sfPreviousTxnID, base_uint<256>{});
         sleBitmap->setFieldU32(sfPreviousTxnLgrSeq, 0);
@@ -484,6 +487,7 @@ flipTickBitmap(
             view.update(sleBitmap);
         }
     }
+    return tesSUCCESS;
 }
 
 std::optional<std::pair<std::int32_t, uint128>>
@@ -970,8 +974,11 @@ extractAmount(STAmount const& amt)
     }
     else
     {
+        // Cap at 19 iterations: 10^19 is the largest power of 10 that
+        // fits in uint64_t.  Since STAmount mantissa <= ~10^16,
+        // mantissa / 10^19 is already 0 for any valid IOU.
         std::uint64_t divisor = 1;
-        for (int i = 0; i < -e && i < 20; ++i)
+        for (int i = 0; i < -e && i < 19; ++i)
             divisor *= 10;
         return mantissa / divisor;
     }

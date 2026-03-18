@@ -366,8 +366,10 @@ CLAMMDeposit::doApply()
             sleTick->setFieldU32(
                 sfPreviousTxnLgrSeq, ctx_.view().seq());
             sb.insert(sleTick);
-            clamm::flipTickBitmap(
-                sb, poolID, ammAccountID, lowerTick, tickSpacing, j_);
+            if (auto const ret = clamm::flipTickBitmap(
+                    sb, poolID, ammAccountID, lowerTick, tickSpacing, j_);
+                ret != tesSUCCESS)
+                return ret;
         }
         else
         {
@@ -427,8 +429,10 @@ CLAMMDeposit::doApply()
             sleTick->setFieldU32(
                 sfPreviousTxnLgrSeq, ctx_.view().seq());
             sb.insert(sleTick);
-            clamm::flipTickBitmap(
-                sb, poolID, ammAccountID, upperTick, tickSpacing, j_);
+            if (auto const ret = clamm::flipTickBitmap(
+                    sb, poolID, ammAccountID, upperTick, tickSpacing, j_);
+                ret != tesSUCCESS)
+                return ret;
         }
         else
         {

@@ -8,6 +8,7 @@
 #include <xrpl/protocol/Indexes.h>
 #include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/STTx.h>
+#include <xrpl/protocol/TER.h>
 
 #include <boost/multiprecision/cpp_int.hpp>
 
@@ -19,6 +20,7 @@ namespace clamm {
 // Type aliases for Q64.96 fixed-point arithmetic.
 using uint128 = boost::multiprecision::uint128_t;
 using uint256 = boost::multiprecision::uint256_t;
+using uint512 = boost::multiprecision::uint512_t;
 using int128 = boost::multiprecision::int128_t;
 using int256 = boost::multiprecision::int256_t;
 
@@ -125,7 +127,7 @@ tickBitmapPosition(std::int32_t tick, std::uint16_t tickSpacing);
 /** Toggle a bit in the tick bitmap when a tick is initialized or cleared.
  *  Creates or deletes bitmap SLEs as needed.
  */
-void
+TER
 flipTickBitmap(
     ApplyView& view,
     base_uint<256> const& poolID,

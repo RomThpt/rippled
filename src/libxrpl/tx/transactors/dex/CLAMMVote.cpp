@@ -119,12 +119,11 @@ CLAMMVote::doApply()
         return tecNO_PERMISSION;
     }
 
-    // Scale voter liquidity to a uint32 weight.
-    // We use the pool's total active liquidity as denominator, but since
-    // positions can be out-of-range, we compute total from all voters.
-    // The weight is stored as raw liquidity (uint64 truncation) and the
-    // weighted average is computed using Number arithmetic.
-    // Cap liquidity to uint32 for vote weight (sufficient for weighted avg)
+    // Use full liquidity (as int64) for weighted average computation.
+    // The stored sfVoteWeight is capped to uint32 for display/eviction only.
+    auto const liquidityNew = static_cast<std::int64_t>(std::min<clamm::uint128>(
+        voterLiquidity,
+        clamm::uint128(std::numeric_limits<std::int64_t>::max())));
     auto const weightNew = static_cast<std::uint32_t>(std::min<clamm::uint128>(
         voterLiquidity,
         clamm::uint128(std::numeric_limits<std::uint32_t>::max())));
@@ -147,9 +146,16 @@ CLAMMVote::doApply()
             auto const entryAccount = entry[sfAccount];
             auto entryFee = entry[~sfTradingFee].value_or(0);
 
-            // Recompute each voter's weight from current liquidity
+            // Recompute each voter's liquidity and capped weight
             auto const entryLiquidity =
                 computeAccountLiquidity(sb, entryAccount, poolID);
+            // Full-precision liquidity for weighted average
+            auto const entryLiq = static_cast<std::int64_t>(
+                std::min<clamm::uint128>(
+                    entryLiquidity,
+                    clamm::uint128(
+                        std::numeric_limits<std::int64_t>::max())));
+            // Capped weight for stored field and eviction
             auto const weight =
                 static_cast<std::uint32_t>(std::min<clamm::uint128>(
                     entryLiquidity,
@@ -157,16 +163,16 @@ CLAMMVote::doApply()
                         std::numeric_limits<std::uint32_t>::max())));
 
             // Skip voters who no longer have liquidity
-            if (weight == 0 && entryAccount != account)
+            if (entryLiq == 0 && entryAccount != account)
                 continue;
 
             if (entryAccount == account)
             {
                 entryFee = feeNew;
                 foundAccount = true;
-                // Use the freshly computed weight for this voter
-                num += Number(entryFee) * weightNew;
-                den += weightNew;
+                // Use full-precision liquidity for weighted average
+                num += Number(entryFee) * liquidityNew;
+                den += liquidityNew;
 
                 STObject newEntry = STObject::makeInnerObject(sfVoteEntry);
                 newEntry.setAccountID(sfAccount, entryAccount);
@@ -177,8 +183,8 @@ CLAMMVote::doApply()
             }
             else
             {
-                num += Number(entryFee) * weight;
-                den += weight;
+                num += Number(entryFee) * entryLiq;
+                den += entryLiq;
 
                 STObject newEntry = STObject::makeInnerObject(sfVoteEntry);
                 newEntry.setAccountID(sfAccount, entryAccount);
@@ -215,21 +221,29 @@ CLAMMVote::doApply()
 
             if (pos)
             {
-                // Replace evicted entry — subtract its contribution
+                // Replace evicted entry -- subtract its full-precision
+                // liquidity contribution from the weighted average.
                 auto const& evicted = updatedVoteSlots[*pos];
                 auto const evictedFee =
                     evicted[~sfTradingFee].value_or(0);
-                auto const evictedWeight = evicted[sfVoteWeight];
-                num -= Number(evictedFee) * evictedWeight;
-                den -= evictedWeight;
+                auto const evictedLiq =
+                    computeAccountLiquidity(
+                        sb, evicted[sfAccount], poolID);
+                auto const evictedLiqNum = static_cast<std::int64_t>(
+                    std::min<clamm::uint128>(
+                        evictedLiq,
+                        clamm::uint128(
+                            std::numeric_limits<std::int64_t>::max())));
+                num -= Number(evictedFee) * evictedLiqNum;
+                den -= evictedLiqNum;
                 updatedVoteSlots[*pos] = std::move(newEntry);
             }
             else
             {
                 updatedVoteSlots.push_back(std::move(newEntry));
             }
-            num += Number(feeNew) * weightNew;
-            den += weightNew;
+            num += Number(feeNew) * liquidityNew;
+            den += liquidityNew;
         };
 
         if (updatedVoteSlots.size() < CLAMM_VOTE_MAX_SLOTS)

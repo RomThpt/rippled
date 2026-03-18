@@ -574,9 +574,9 @@ doCLAMMQuote(RPC::JsonContext& context)
     auto const inputIssue = zeroForOne ? issue0 : issue1;
 
     Json::Value quote;
-    quote["amount_in"] = static_cast<Json::UInt>(sim.amountIn);
-    quote["amount_out"] = static_cast<Json::UInt>(sim.amountOut);
-    quote["fee_amount"] = static_cast<Json::UInt>(sim.feeAmount);
+    quote["amount_in"] = std::to_string(sim.amountIn);
+    quote["amount_out"] = std::to_string(sim.amountOut);
+    quote["fee_amount"] = std::to_string(sim.feeAmount);
     quote["input_asset"] = to_json(inputIssue);
     quote["output_asset"] = to_json(outputIssue);
     quote["final_tick"] = sim.finalTick;

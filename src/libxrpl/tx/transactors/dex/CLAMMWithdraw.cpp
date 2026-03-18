@@ -237,8 +237,10 @@ CLAMMWithdraw::doApply()
                 return tefBAD_LEDGER;
             }
             sb.erase(sleTick);
-            clamm::flipTickBitmap(
-                sb, poolID, ammAccountID, tickIndex, tickSpacing, j_);
+            if (auto const ret = clamm::flipTickBitmap(
+                    sb, poolID, ammAccountID, tickIndex, tickSpacing, j_);
+                ret != tesSUCCESS)
+                return ret;
         }
         else
         {
