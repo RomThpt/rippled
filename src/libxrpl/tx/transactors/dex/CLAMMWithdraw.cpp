@@ -138,22 +138,19 @@ CLAMMWithdraw::doApply()
 
     if (posLiquidity > 0)
     {
-        if (feeGrowthInside.feeGrowthInside0 >= fgi0Last)
-        {
-            auto const feeDelta0 =
-                feeGrowthInside.feeGrowthInside0 - fgi0Last;
-            feesOwed0 += static_cast<std::uint64_t>(
-                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
-                clamm::Q96);
-        }
-        if (feeGrowthInside.feeGrowthInside1 >= fgi1Last)
-        {
-            auto const feeDelta1 =
-                feeGrowthInside.feeGrowthInside1 - fgi1Last;
-            feesOwed1 += static_cast<std::uint64_t>(
-                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
-                clamm::Q96);
-        }
+        // Use unsigned wrapping subtraction (modular arithmetic).
+        // No >= guard needed: current - last is always the correct delta.
+        auto const feeDelta0 =
+            feeGrowthInside.feeGrowthInside0 - fgi0Last;
+        auto const feeDelta1 =
+            feeGrowthInside.feeGrowthInside1 - fgi1Last;
+
+        feesOwed0 += static_cast<std::uint64_t>(
+            (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
+            clamm::Q96);
+        feesOwed1 += static_cast<std::uint64_t>(
+            (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
+            clamm::Q96);
     }
 
     // Total amounts to transfer (principal + fees)
@@ -310,14 +307,18 @@ CLAMMWithdraw::doApply()
             sfLiquidityAmount, clamm::toSLEField(remaining));
 
         // Reset fee snapshots and clear collected fees
-        if (feeGrowthInside.feeGrowthInside0 > 0)
+        if (feeGrowthInside.feeGrowthInside0 != 0)
             slePos->setFieldH128(
                 sfFeeGrowthInside0Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-        if (feeGrowthInside.feeGrowthInside1 > 0)
+        else if (slePos->isFieldPresent(sfFeeGrowthInside0Last))
+            slePos->makeFieldAbsent(sfFeeGrowthInside0Last);
+        if (feeGrowthInside.feeGrowthInside1 != 0)
             slePos->setFieldH128(
                 sfFeeGrowthInside1Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
+        else if (slePos->isFieldPresent(sfFeeGrowthInside1Last))
+            slePos->makeFieldAbsent(sfFeeGrowthInside1Last);
 
         if (slePos->isFieldPresent(sfTokensOwed0))
             slePos->makeFieldAbsent(sfTokensOwed0);

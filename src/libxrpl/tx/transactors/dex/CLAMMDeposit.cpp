@@ -212,8 +212,32 @@ CLAMMDeposit::doApply()
     else if (ctx_.tx.isFieldPresent(sfAmount) &&
              ctx_.tx.isFieldPresent(sfAmount2))
     {
-        auto const amount0 = clamm::extractAmount(ctx_.tx[sfAmount]);
-        auto const amount1 = clamm::extractAmount(ctx_.tx[sfAmount2]);
+        // Get pool's canonical asset ordering
+        auto const& clammRefForOrder = std::as_const(*sleClamm);
+        auto const poolIssue0 = clammRefForOrder[sfAsset].get<Issue>();
+        auto const poolIssue1 = clammRefForOrder[sfAsset2].get<Issue>();
+        auto const txIssue0 = ctx_.tx[sfAmount].issue();
+        auto const txIssue1 = ctx_.tx[sfAmount2].issue();
+
+        std::uint64_t amount0, amount1;
+        if (txIssue0 == poolIssue0 && txIssue1 == poolIssue1)
+        {
+            amount0 = clamm::extractAmount(ctx_.tx[sfAmount]);
+            amount1 = clamm::extractAmount(ctx_.tx[sfAmount2]);
+        }
+        else if (txIssue0 == poolIssue1 && txIssue1 == poolIssue0)
+        {
+            // User provided amounts in reverse order -- swap them
+            amount0 = clamm::extractAmount(ctx_.tx[sfAmount2]);
+            amount1 = clamm::extractAmount(ctx_.tx[sfAmount]);
+        }
+        else
+        {
+            JLOG(j_.debug())
+                << "CLAMM Deposit: amount issues don't match pool assets.";
+            return temBAD_AMOUNT;
+        }
+
         liquidity = clamm::getLiquidityForAmounts(
             sqrtPriceCurrent, sqrtPriceLower, sqrtPriceUpper, amount0, amount1);
     }
@@ -476,14 +500,18 @@ CLAMMDeposit::doApply()
         sleExistingPos->setFieldH128(
             sfLiquidityAmount, clamm::toSLEField(newLiquidity));
 
-        if (feeGrowthInside.feeGrowthInside0 > 0)
+        if (feeGrowthInside.feeGrowthInside0 != 0)
             sleExistingPos->setFieldH128(
                 sfFeeGrowthInside0Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-        if (feeGrowthInside.feeGrowthInside1 > 0)
+        else if (sleExistingPos->isFieldPresent(sfFeeGrowthInside0Last))
+            sleExistingPos->makeFieldAbsent(sfFeeGrowthInside0Last);
+        if (feeGrowthInside.feeGrowthInside1 != 0)
             sleExistingPos->setFieldH128(
                 sfFeeGrowthInside1Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
+        else if (sleExistingPos->isFieldPresent(sfFeeGrowthInside1Last))
+            sleExistingPos->makeFieldAbsent(sfFeeGrowthInside1Last);
 
         sleExistingPos->setFieldH256(
             sfPreviousTxnID, ctx_.tx.getTransactionID());
@@ -560,11 +588,11 @@ CLAMMDeposit::doApply()
         slePos->setFieldH128(sfLiquidityAmount, clamm::toSLEField(liquidity));
 
         // Snapshot proper feeGrowthInside (not just global)
-        if (feeGrowthInside.feeGrowthInside0 > 0)
+        if (feeGrowthInside.feeGrowthInside0 != 0)
             slePos->setFieldH128(
                 sfFeeGrowthInside0Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-        if (feeGrowthInside.feeGrowthInside1 > 0)
+        if (feeGrowthInside.feeGrowthInside1 != 0)
             slePos->setFieldH128(
                 sfFeeGrowthInside1Last,
                 clamm::toSLEField(feeGrowthInside.feeGrowthInside1));

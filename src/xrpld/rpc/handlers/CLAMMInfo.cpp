@@ -54,8 +54,16 @@ resolveCLAMMPool(
         {
             auto const asset = issueFromJson(params["asset"]);
             auto const asset2 = issueFromJson(params["asset2"]);
-            auto const feeTier =
-                static_cast<std::uint8_t>(params["fee_tier"].asUInt());
+            auto const feeTierRaw = params["fee_tier"].asUInt();
+
+            if (feeTierRaw > CLAMM_MAX_FEE_TIER)
+            {
+                result[jss::error] = "invalidParams";
+                result[jss::error_message] = "Invalid fee_tier";
+                return nullptr;
+            }
+
+            auto const feeTier = static_cast<std::uint8_t>(feeTierRaw);
 
             if (!isValidCLAMMFeeTier(feeTier))
             {
@@ -529,8 +537,7 @@ doCLAMMQuote(RPC::JsonContext& context)
 
     if (params["amount"].isObject())
     {
-        amountIn =
-            static_cast<std::uint64_t>(params["amount"]["value"].asUInt());
+        amountIn = std::stoull(params["amount"]["value"].asString());
         auto const currency =
             params["amount"].isMember("currency")
             ? params["amount"]["currency"].asString()
@@ -540,7 +547,7 @@ doCLAMMQuote(RPC::JsonContext& context)
     }
     else
     {
-        amountIn = params["amount"].asUInt();
+        amountIn = std::stoull(params["amount"].asString());
         if (params.isMember("direction"))
             zeroForOne = (params["direction"].asString() == "zero_for_one");
     }
@@ -610,7 +617,10 @@ doCLAMMQuote(RPC::JsonContext& context)
         {
             auto const ratioScaled =
                 (effectiveNum * scale192 * SCALE) / denom;
-            auto const ratioVal = static_cast<std::int64_t>(ratioScaled);
+            // Clamp to avoid overflow when casting to int64
+            auto const ratioVal = ratioScaled > clamm::uint256(INT64_MAX)
+                ? INT64_MAX
+                : static_cast<std::int64_t>(ratioScaled);
             auto const diff = std::abs(
                 static_cast<std::int64_t>(SCALE) - ratioVal);
             priceImpact = static_cast<double>(diff) / SCALE;

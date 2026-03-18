@@ -63,6 +63,31 @@ CLAMMDelete::preclaim(PreclaimContext const& ctx)
         }
     }
 
+    // Check for out-of-range positions: scan pool directory for ticks
+    // with non-zero liquidityGross (indicating positions still reference them).
+    auto const ammAccountID = sleClamm->getAccountID(sfAccount);
+    bool hasPositions = false;
+    forEachItem(
+        ctx.view,
+        ammAccountID,
+        [&](std::shared_ptr<SLE const> const& sle) {
+            if (hasPositions)
+                return;
+            if (sle->getType() == ltCLAMM_TICK)
+            {
+                auto const gross =
+                    sle->getFieldH128(sfLiquidityGross);
+                if (gross != base_uint<128>{})
+                    hasPositions = true;
+            }
+        });
+    if (hasPositions)
+    {
+        JLOG(ctx.j.debug())
+            << "CLAMM Delete: pool has outstanding positions.";
+        return tecAMM_NOT_EMPTY;
+    }
+
     return tesSUCCESS;
 }
 

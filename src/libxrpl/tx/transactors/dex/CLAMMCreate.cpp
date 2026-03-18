@@ -83,6 +83,10 @@ CLAMMCreate::preclaim(PreclaimContext const& ctx)
         if (isXRP(issue))
             continue;
 
+        // Issuer doesn't need a trust line to themselves
+        if (issue.account == accountID)
+            continue;
+
         // Creator must have a trust line to the issuer
         if (!ctx.view.read(
                 keylet::line(accountID, issue.account, issue.currency)))
@@ -121,16 +125,14 @@ CLAMMCreate::preclaim(PreclaimContext const& ctx)
 TER
 CLAMMCreate::doApply()
 {
-    auto const accountID = ctx_.tx[sfAccount];
     auto const asset = ctx_.tx[sfAsset];
     auto const asset2 = ctx_.tx[sfAsset2];
     auto const feeTier = ctx_.tx[sfFeeTier];
     auto const tickSpacing = clammTickSpacing(feeTier);
     auto const tradingFee = clammTradingFee(feeTier);
 
-    auto const initialSqrtPrice =
+    auto initialSqrtPrice =
         clamm::fromSLEField(ctx_.tx.getFieldH128(sfInitialSqrtPrice));
-    auto const initialTick = clamm::sqrtPriceToTick(initialSqrtPrice);
 
     auto const clammKeylet = keylet::clamm(asset, asset2, feeTier);
 
@@ -152,6 +154,18 @@ CLAMMCreate::doApply()
     sleClamm->setAccountID(sfAccount, ammAccountID);
     auto const& [issue1, issue2] =
         std::minmax(asset.get<Issue>(), asset2.get<Issue>());
+
+    // If canonical ordering differs from user-specified ordering,
+    // invert the sqrt price: sqrtPrice' = 2^192 / sqrtPrice.
+    // This ensures the price correctly reflects the canonical pair.
+    if (issue1 != asset.get<Issue>())
+    {
+        auto const q192 = clamm::uint256(1) << 192;
+        initialSqrtPrice = static_cast<clamm::uint128>(
+            q192 / clamm::uint256(initialSqrtPrice));
+    }
+
+    auto const initialTick = clamm::sqrtPriceToTick(initialSqrtPrice);
     sleClamm->setFieldIssue(sfAsset, STIssue{sfAsset, issue1});
     sleClamm->setFieldIssue(sfAsset2, STIssue{sfAsset2, issue2});
     sleClamm->setFieldU8(sfFeeTier, feeTier);
