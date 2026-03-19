@@ -1976,10 +1976,9 @@ struct CLAMM_test : public beast::unit_test::suite
         }
 
         {
-            // 11. Individual freeze does NOT block withdraw.
-            // Individual freeze on the user's trust line does not
-            // affect the pool-to-user transfer in the invariant
-            // checker.
+            // 11. Individual freeze DOES block withdraw.
+            // Individual freeze on the user's trust line prevents
+            // withdrawal from the pool.
             auto const features =
                 jtx::testable_amendments() | featureCLAMM;
             Env env{*this, features};
@@ -2009,12 +2008,12 @@ struct CLAMM_test : public beast::unit_test::suite
             if (nft)
             {
                 env(clammWithdraw(alice, *nft),
-                    ter(tesSUCCESS));
+                    ter(tecFROZEN));
                 env.close();
             }
         }
 
-        // --- CLAMMCollectFees (no freeze checks in preclaim) ---
+        // --- CLAMMCollectFees ---
 
         {
             // 12. Global freeze does NOT block fee collection
@@ -2058,7 +2057,7 @@ struct CLAMM_test : public beast::unit_test::suite
         }
 
         {
-            // 13. Individual freeze does NOT block fee collection
+            // 13. Individual freeze DOES block fee collection
             auto const features =
                 jtx::testable_amendments() | featureCLAMM;
             Env env{*this, features};
@@ -2093,7 +2092,7 @@ struct CLAMM_test : public beast::unit_test::suite
             if (nft)
             {
                 env(clammCollectFees(alice, *nft),
-                    ter(tesSUCCESS));
+                    ter(tecFROZEN));
                 env.close();
             }
         }

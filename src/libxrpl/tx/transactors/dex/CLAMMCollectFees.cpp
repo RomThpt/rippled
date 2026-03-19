@@ -28,11 +28,39 @@ TER
 CLAMMCollectFees::preclaim(PreclaimContext const& ctx)
 {
     auto const nfTokenID = ctx.tx.getFieldH256(sfNFTokenID);
-    if (!ctx.view.read(keylet::clammPosition(nfTokenID)))
+    auto const slePos = ctx.view.read(keylet::clammPosition(nfTokenID));
+    if (!slePos)
     {
         JLOG(ctx.j.debug()) << "CLAMM CollectFees: position not found.";
         return tecNO_ENTRY;
     }
+
+    // Check if fee collector's trust line is individually frozen
+    auto const poolID = slePos->getFieldH256(sfPoolID);
+    auto const sleClamm = ctx.view.read(keylet::clamm(poolID));
+    if (sleClamm)
+    {
+        auto const accountID = ctx.tx[sfAccount];
+        auto const& clammRef = std::as_const(*sleClamm);
+        auto const issue0 = clammRef[sfAsset].get<Issue>();
+        auto const issue1 = clammRef[sfAsset2].get<Issue>();
+
+        for (auto const& issue : {issue0, issue1})
+        {
+            if (isXRP(issue))
+                continue;
+
+            if (isIndividualFrozen(
+                    ctx.view, accountID, issue.currency, issue.account))
+            {
+                JLOG(ctx.j.debug())
+                    << "CLAMM CollectFees: collector asset frozen, "
+                    << issue;
+                return tecFROZEN;
+            }
+        }
+    }
+
     return tesSUCCESS;
 }
 
