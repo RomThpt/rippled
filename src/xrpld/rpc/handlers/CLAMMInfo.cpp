@@ -535,21 +535,29 @@ doCLAMMQuote(RPC::JsonContext& context)
     std::uint64_t amountIn = 0;
     bool zeroForOne = true;
 
-    if (params["amount"].isObject())
+    try
     {
-        amountIn = std::stoull(params["amount"]["value"].asString());
-        auto const currency =
-            params["amount"].isMember("currency")
-            ? params["amount"]["currency"].asString()
-            : "";
-        zeroForOne =
-            (currency == to_string(issue0.currency));
+        if (params["amount"].isObject())
+        {
+            amountIn = std::stoull(params["amount"]["value"].asString());
+            auto const currency =
+                params["amount"].isMember("currency")
+                ? params["amount"]["currency"].asString()
+                : "";
+            zeroForOne =
+                (currency == to_string(issue0.currency));
+        }
+        else
+        {
+            amountIn = std::stoull(params["amount"].asString());
+            if (params.isMember("direction"))
+                zeroForOne =
+                    (params["direction"].asString() == "zero_for_one");
+        }
     }
-    else
+    catch (std::exception const&)
     {
-        amountIn = std::stoull(params["amount"].asString());
-        if (params.isMember("direction"))
-            zeroForOne = (params["direction"].asString() == "zero_for_one");
+        return RPC::invalid_field_error("amount");
     }
 
     // Use shared swap simulation

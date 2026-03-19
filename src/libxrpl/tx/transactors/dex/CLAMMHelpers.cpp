@@ -737,7 +737,9 @@ simulateSwap(
             zeroForOne);
 
         sim.finalSqrtPrice = step.sqrtPriceNext;
-        amountRemaining -= step.amountIn + step.feeAmount;
+        auto const consumed = std::min(
+            step.amountIn + step.feeAmount, amountRemaining);
+        amountRemaining -= consumed;
         sim.amountOut += step.amountOut;
         sim.feeAmount += step.feeAmount;
 
@@ -872,7 +874,9 @@ applySwap(
             zeroForOne);
 
         result.finalSqrtPrice = step.sqrtPriceNext;
-        amountRemaining -= step.amountIn + step.feeAmount;
+        auto const consumed = std::min(
+            step.amountIn + step.feeAmount, amountRemaining);
+        amountRemaining -= consumed;
         result.amountOut += step.amountOut;
         result.totalFees += step.feeAmount;
 

@@ -245,13 +245,18 @@ CLAMMClawback::applyGuts(Sandbox& sb)
     if (positions.empty())
         return tecAMM_BALANCE;
 
-    // Compute total issuer's asset across all positions
+    // Compute total issuer's asset across all positions (saturating)
+    auto const saturatingAdd = [](std::uint64_t a, std::uint64_t b)
+        -> std::uint64_t {
+        return (a <= UINT64_MAX - b) ? a + b : UINT64_MAX;
+    };
     std::uint64_t totalIssuerAmount = 0;
     for (auto const& pos : positions)
     {
-        totalIssuerAmount += issuerIsAsset0
-            ? (pos.principal0 + pos.fees0)
-            : (pos.principal1 + pos.fees1);
+        auto const posAmount = issuerIsAsset0
+            ? saturatingAdd(pos.principal0, pos.fees0)
+            : saturatingAdd(pos.principal1, pos.fees1);
+        totalIssuerAmount = saturatingAdd(totalIssuerAmount, posAmount);
     }
 
     // Determine target clawback amount
@@ -472,9 +477,13 @@ CLAMMClawback::applyGuts(Sandbox& sb)
                 sqrtPriceLower, sqrtPriceUpper, liquidityToRemove);
         }
 
-        // Include fees (always fully collected)
-        amount0 += pos.fees0;
-        amount1 += pos.fees1;
+        // Include fees (always fully collected), with saturating add
+        amount0 = (amount0 <= UINT64_MAX - pos.fees0)
+            ? amount0 + pos.fees0
+            : UINT64_MAX;
+        amount1 = (amount1 <= UINT64_MAX - pos.fees1)
+            ? amount1 + pos.fees1
+            : UINT64_MAX;
 
         totalTransfer0 += amount0;
         totalTransfer1 += amount1;

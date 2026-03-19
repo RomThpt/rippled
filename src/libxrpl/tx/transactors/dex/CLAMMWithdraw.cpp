@@ -180,9 +180,13 @@ CLAMMWithdraw::doApply()
             clamm::Q96);
     }
 
-    // Total amounts to transfer (principal + fees)
-    amount0 += feesOwed0;
-    amount1 += feesOwed1;
+    // Total amounts to transfer (principal + fees), with saturating add
+    amount0 = (amount0 <= UINT64_MAX - feesOwed0)
+        ? amount0 + feesOwed0
+        : UINT64_MAX;
+    amount1 = (amount1 <= UINT64_MAX - feesOwed1)
+        ? amount1 + feesOwed1
+        : UINT64_MAX;
 
     // Check MinAmount/MinAmount2 slippage protection
     if (ctx_.tx.isFieldPresent(sfMinAmount))
