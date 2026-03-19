@@ -33,6 +33,8 @@ class ValidCLAMM
     std::optional<std::uint16_t> clammTickSpacing_;
     bool clammTickMisaligned_{false};
     bool clammPositionBadBounds_{false};
+    bool clammTickLiquidityZero_{false};
+    bool clammSqrtPriceTickMismatch_{false};
 
 public:
     void
@@ -87,6 +89,11 @@ private:
         beast::Journal const& j) const;
     bool
     finalizeDelete(
+        STTx const& tx,
+        ReadView const& view,
+        beast::Journal const& j) const;
+    bool
+    finalizeClawback(
         STTx const& tx,
         ReadView const& view,
         beast::Journal const& j) const;

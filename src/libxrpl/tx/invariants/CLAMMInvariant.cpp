@@ -39,6 +39,32 @@ ValidCLAMM::visitEntry(
             }
             clammCurrentTickAfter_ = after->getFieldI32(sfCurrentTick);
             clammTickSpacing_ = after->getFieldU16(sfTickSpacing);
+
+            // Verify SqrtPrice-tick consistency:
+            // tickToSqrtPrice(currentTick) <= sqrtPrice
+            //   <= tickToSqrtPrice(currentTick + 1)
+            // Tick crossing sets currentTick = nextTick - 1 while
+            // sqrtPrice may land exactly on tickToSqrtPrice(nextTick),
+            // so the upper bound is inclusive.  A true mismatch would
+            // place sqrtPrice strictly above the next tick boundary.
+            if (clammSqrtPriceAfter_ && clammCurrentTickAfter_)
+            {
+                auto const sqrtPrice =
+                    clamm::fromSLEField(*clammSqrtPriceAfter_);
+                auto const tick = *clammCurrentTickAfter_;
+                auto const lower = clamm::tickToSqrtPrice(tick);
+                if (sqrtPrice < lower)
+                {
+                    clammSqrtPriceTickMismatch_ = true;
+                }
+                else if (tick < CLAMM_MAX_TICK)
+                {
+                    auto const upper =
+                        clamm::tickToSqrtPrice(tick + 1);
+                    if (sqrtPrice > upper)
+                        clammSqrtPriceTickMismatch_ = true;
+                }
+            }
         }
     }
 
@@ -56,6 +82,14 @@ ValidCLAMM::visitEntry(
             auto const tickIndex = after->getFieldI32(sfTickIndex);
             if (!isValidCLAMMTick(tickIndex, *clammTickSpacing_))
                 clammTickMisaligned_ = true;
+        }
+
+        // Non-deleted tick must have LiquidityGross > 0
+        if (after && typeAfter == ltCLAMM_TICK && !isDelete)
+        {
+            auto const lg = after->getFieldH128(sfLiquidityGross);
+            if (lg == base_uint<128>{})
+                clammTickLiquidityZero_ = true;
         }
     }
 
@@ -141,6 +175,22 @@ ValidCLAMM::validateValues(beast::Journal const& j) const
         return false;
     }
 
+    // Non-deleted tick must have non-zero LiquidityGross
+    if (clammTickLiquidityZero_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: tick exists with zero LiquidityGross";
+        return false;
+    }
+
+    // SqrtPrice must be consistent with CurrentTick
+    if (clammSqrtPriceTickMismatch_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: sqrtPriceToTick(SqrtPrice) != CurrentTick";
+        return false;
+    }
+
     return true;
 }
 
@@ -189,6 +239,8 @@ ValidCLAMM::finalize(
             return finalizeBid(tx, view, j);
         case ttCLAMM_DELETE:
             return finalizeDelete(tx, view, j);
+        case ttCLAMM_CLAWBACK:
+            return finalizeClawback(tx, view, j);
         default:
             break;
     }
@@ -390,6 +442,49 @@ ValidCLAMM::finalizeDelete(
     }
     // No value validation for delete -- pool is being removed
     return true;
+}
+
+bool
+ValidCLAMM::finalizeClawback(
+    STTx const& tx,
+    ReadView const& view,
+    beast::Journal const& j) const
+{
+    // Pool must be modified or deleted (auto-delete if last position)
+    if (!clammModified_ && !clammDeleted_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMClawback did not modify pool";
+        return false;
+    }
+
+    // At least one position must be modified or deleted
+    if (!clammPositionChanged_)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMClawback did not touch position";
+        return false;
+    }
+
+    // Clawback must not create new positions
+    if (clammPositionsCreated_ != 0)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMClawback created "
+            << clammPositionsCreated_ << " positions";
+        return false;
+    }
+
+    // Clawback must not create new ticks
+    if (clammTicksCreated_ != 0)
+    {
+        JLOG(j.fatal())
+            << "Invariant failed: CLAMMClawback created "
+            << clammTicksCreated_ << " ticks";
+        return false;
+    }
+
+    return validateValues(j);
 }
 
 }  // namespace xrpl
