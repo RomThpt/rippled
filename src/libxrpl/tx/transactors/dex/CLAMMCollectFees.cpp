@@ -211,13 +211,21 @@ CLAMMCollectFees::doApply()
             auto const delta0 = feeGrowthInside.feeGrowthInside0 - fgi0Last;
             auto const delta1 = feeGrowthInside.feeGrowthInside1 - fgi1Last;
             if (delta0 > 0)
-                totalFees0 += static_cast<std::uint64_t>(
+            {
+                auto const a = static_cast<std::uint64_t>(
                     (clamm::uint256(posLiquidity) * clamm::uint256(delta0)) >>
                     clamm::Q96);
+                totalFees0 = (totalFees0 <= UINT64_MAX - a)
+                    ? totalFees0 + a : UINT64_MAX;
+            }
             if (delta1 > 0)
-                totalFees1 += static_cast<std::uint64_t>(
+            {
+                auto const a = static_cast<std::uint64_t>(
                     (clamm::uint256(posLiquidity) * clamm::uint256(delta1)) >>
                     clamm::Q96);
+                totalFees1 = (totalFees1 <= UINT64_MAX - a)
+                    ? totalFees1 + a : UINT64_MAX;
+            }
         }
         remaining0 = totalFees0 - fees0;
         remaining1 = totalFees1 - fees1;

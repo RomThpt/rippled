@@ -21,7 +21,7 @@ class CLAMMOffer
 private:
     CLAMMLiquidity<TIn, TOut> const& clammLiquidity_;
     CLAMMPoolInfo pool_;
-    TAmounts<TIn, TOut> const amounts_;
+    TAmounts<TIn, TOut> amounts_;
     Quality const quality_;
     beast::Journal const j_;
     bool consumed_;

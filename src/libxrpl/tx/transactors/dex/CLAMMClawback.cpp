@@ -286,8 +286,8 @@ CLAMMClawback::applyGuts(Sandbox& sb)
         {
             auto const& pos = positions[i];
             auto const posIssuerTotal = issuerIsAsset0
-                ? (pos.principal0 + pos.fees0)
-                : (pos.principal1 + pos.fees1);
+                ? saturatingAdd(pos.principal0, pos.fees0)
+                : saturatingAdd(pos.principal1, pos.fees1);
 
             if (remaining >= posIssuerTotal)
             {

@@ -224,9 +224,6 @@ CLAMMSwap::doApply()
         clamm::fromSLEField(sleClamm->getFieldH128(sfFeeGrowthGlobal0));
     auto feeGrowthGlobal1 =
         clamm::fromSLEField(sleClamm->getFieldH128(sfFeeGrowthGlobal1));
-    auto protocolFees0 = sleClamm->getFieldU64(sfProtocolFees0);
-    auto protocolFees1 = sleClamm->getFieldU64(sfProtocolFees1);
-
     auto const initialAmountIn = clamm::extractAmount(amountIn);
 
     // Execute swap loop via shared helper
