@@ -351,6 +351,30 @@ clammBidByAssets(
     return jv;
 }
 
+// Create CLAMMClawback transaction JSON
+inline Json::Value
+clammClawback(
+    jtx::Account const& issuer,
+    jtx::Account const& holder,
+    Issue const& asset,
+    Issue const& asset2,
+    std::uint8_t feeTier,
+    std::optional<STAmount> const& amount = std::nullopt)
+{
+    Json::Value jv;
+    jv[jss::TransactionType] = jss::CLAMMClawback;
+    jv[jss::Account] = issuer.human();
+    jv[sfHolder.jsonName] = holder.human();
+    jv[jss::Asset] =
+        STIssue(sfAsset, asset).getJson(JsonOptions::none);
+    jv[jss::Asset2] =
+        STIssue(sfAsset2, asset2).getJson(JsonOptions::none);
+    jv[sfFeeTier.jsonName] = feeTier;
+    if (amount)
+        amount->setJson(jv[jss::Amount]);
+    return jv;
+}
+
 // Create CLAMMDelete transaction JSON
 inline Json::Value
 clammDelete(

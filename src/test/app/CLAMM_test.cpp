@@ -4645,6 +4645,233 @@ struct CLAMM_test : public beast::unit_test::suite
         testTickCrossingLiquidityTransition();
         testFeeGrowthOverflowWrapping();
         testMultipleTickCrossingsDeepSwap();
+        testClawback();
+    }
+
+    // ================================================================
+    // CLAMMClawback tests
+    // ================================================================
+
+    void
+    testClawback()
+    {
+        testcase("CLAMMClawback");
+        using namespace jtx;
+
+        // Helper: setup env with clawback flag set BEFORE trust lines
+        auto clawbackSetup = [&](Env& env) {
+            env.fund(XRP(100'000), gw, alice, bob, carol);
+            env.close();
+            // Must set clawback flag before any owned objects
+            env(fset(gw, asfAllowTrustLineClawback));
+            env.close();
+            env.trust(USD(1'000'000), alice);
+            env.trust(USD(1'000'000), bob);
+            env.trust(USD(1'000'000), carol);
+            env.close();
+            env(pay(gw, alice, USD(100'000)));
+            env(pay(gw, bob, USD(100'000)));
+            env(pay(gw, carol, USD(100'000)));
+            env.close();
+        };
+
+        // 1. Issuer == holder -> temMALFORMED
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            env(clammClawback(gw, gw, USD.issue(), xrpIssue(), 1),
+                ter(temMALFORMED));
+        }
+
+        // 2. Asset is XRP -> temMALFORMED
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            env(clammClawback(gw, alice, xrpIssue(), USD.issue(), 1),
+                ter(temMALFORMED));
+        }
+
+        // 3. Asset issuer != Account -> temMALFORMED
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            // alice tries to claw back gw's USD
+            env(clammClawback(alice, bob, USD.issue(), xrpIssue(), 1),
+                ter(temMALFORMED));
+        }
+
+        // 4. Pool not found -> tecNO_ENTRY
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            env(clammClawback(gw, alice, USD.issue(), xrpIssue(), 1),
+                ter(tecNO_ENTRY));
+        }
+
+        // 5. No clawback permission -> tecNO_PERMISSION
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            // Use standard setup (no clawback flag)
+            clammSetupEnv(env, gw, alice, bob, carol, USD);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammClawback(gw, alice, USD.issue(), xrpIssue(), 1),
+                ter(tecNO_PERMISSION));
+        }
+
+        // 6. Holder has no positions -> tecAMM_BALANCE
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // bob has no positions in this pool
+            env(clammClawback(gw, bob, USD.issue(), xrpIssue(), 1),
+                ter(tecAMM_BALANCE));
+        }
+
+        // 7. Full clawback succeeds
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+
+            env(clammClawback(gw, alice, USD.issue(), xrpIssue(), 1),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Position should be gone after full clawback
+            auto const nftAfter =
+                clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(!nftAfter.has_value());
+        }
+
+        // 8. Partial clawback with specific amount
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            auto const pid =
+                clammPoolID(xrpIssue(), USD.issue(), 1);
+
+            env(clammCreate(env,
+                    alice, xrpIssue(), USD.issue(), 1,
+                    clammDefaultSqrtPrice()),
+                ter(tesSUCCESS));
+            env.close();
+
+            env(clammDeposit(
+                    alice, pid, -1000, 1000,
+                    XRP(10'000), USD(10'000)),
+                ter(tesSUCCESS));
+            env.close();
+
+            auto const nft = clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nft.has_value());
+
+            // Claw back a small amount (position should remain)
+            env(clammClawback(
+                    gw, alice, USD.issue(), xrpIssue(), 1,
+                    USD(100)),
+                ter(tesSUCCESS));
+            env.close();
+
+            // Position should still exist (partial withdrawal)
+            auto const nftAfter =
+                clammFindPositionNFT(env, alice, pid);
+            BEAST_EXPECT(nftAfter.has_value());
+        }
+
+        // 9. Bad amount (wrong issue) -> temBAD_AMOUNT
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            env(clammClawback(
+                    gw, alice, USD.issue(), xrpIssue(), 1,
+                    XRP(100)),
+                ter(temBAD_AMOUNT));
+        }
+
+        // 10. Negative amount -> temBAD_AMOUNT
+        {
+            auto const features =
+                jtx::testable_amendments() | featureCLAMM;
+            Env env{*this, features};
+            clawbackSetup(env);
+
+            env(clammClawback(
+                    gw, alice, USD.issue(), xrpIssue(), 1,
+                    USD(-100)),
+                ter(temBAD_AMOUNT));
+        }
     }
 };
 
