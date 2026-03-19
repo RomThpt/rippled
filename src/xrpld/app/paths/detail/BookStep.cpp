@@ -835,9 +835,12 @@ BookStep<TIn, TOut, TDerived>::consumeOffer(
     {
         // purposely written as separate if statements so we get logging even
         // when the amendment isn't active.
-        if (sb.rules().enabled(fixAMMOverflowOffer))
+        if (sb.rules().enabled(fixAMMOverflowOffer) ||
+            sb.rules().enabled(featureCLAMM))
         {
-            Throw<FlowException>(tecINVARIANT_FAILED, "AMM pool product invariant failed.");
+            Throw<FlowException>(
+                tecINVARIANT_FAILED,
+                "AMM/CLAMM pool product invariant failed.");
         }
     }
 

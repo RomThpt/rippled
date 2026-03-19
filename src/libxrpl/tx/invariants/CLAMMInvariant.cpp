@@ -242,10 +242,10 @@ ValidCLAMM::finalize(
         case ttCLAMM_CLAWBACK:
             return finalizeClawback(tx, view, j);
         default:
-            break;
+            // Non-CLAMM transactions (e.g. Payment, OfferCreate) can modify
+            // CLAMM state via path-finding. Validate structural invariants.
+            return validateValues(j);
     }
-
-    return true;
 }
 
 bool

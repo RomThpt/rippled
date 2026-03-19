@@ -4,6 +4,7 @@
 #include <xrpl/protocol/Indexes.h>
 #include <xrpl/protocol/Rate.h>
 #include <xrpl/protocol/TxFlags.h>
+#include <xrpl/tx/transactors/dex/CLAMMHelpers.h>
 #include <xrpl/tx/transactors/nft/NFTokenAcceptOffer.h>
 #include <xrpl/tx/transactors/nft/NFTokenUtils.h>
 
@@ -407,6 +408,62 @@ NFTokenAcceptOffer::transferNFToken(
                 describeOwnerDir(buyer));
             if (!buyerPage)
                 return tecDIR_FULL;
+
+            // Settle accumulated fees before ownership transfer so the
+            // new owner does not inherit the seller's uncollected fees.
+            auto const poolID = slePos->getFieldH256(sfPoolID);
+            auto const sleClamm = view().read(keylet::clamm(poolID));
+            if (sleClamm)
+            {
+                auto const lowerTick = slePos->getFieldI32(sfLowerTick);
+                auto const upperTick = slePos->getFieldI32(sfUpperTick);
+                auto const currentTick = sleClamm->getFieldI32(sfCurrentTick);
+                auto const fg0 = clamm::fromSLEField(
+                    sleClamm->getFieldH128(sfFeeGrowthGlobal0));
+                auto const fg1 = clamm::fromSLEField(
+                    sleClamm->getFieldH128(sfFeeGrowthGlobal1));
+
+                auto const fgi = clamm::computeFeeGrowthInside(
+                    view(), poolID, lowerTick, upperTick,
+                    currentTick, fg0, fg1);
+
+                auto const posLiq = clamm::fromSLEField(
+                    slePos->getFieldH128(sfLiquidityAmount));
+                auto const fgi0Last = clamm::fromSLEField(
+                    slePos->getFieldH128(sfFeeGrowthInside0Last));
+                auto const fgi1Last = clamm::fromSLEField(
+                    slePos->getFieldH128(sfFeeGrowthInside1Last));
+
+                if (posLiq > 0)
+                {
+                    auto const d0 = fgi.feeGrowthInside0 - fgi0Last;
+                    auto const d1 = fgi.feeGrowthInside1 - fgi1Last;
+                    if (d0 > 0)
+                    {
+                        auto owed = slePos->getFieldU64(sfTokensOwed0);
+                        auto const a = static_cast<std::uint64_t>(
+                            (clamm::uint256(posLiq) * clamm::uint256(d0)) >>
+                            clamm::Q96);
+                        owed = (owed <= UINT64_MAX - a) ? owed + a : UINT64_MAX;
+                        slePos->setFieldU64(sfTokensOwed0, owed);
+                    }
+                    if (d1 > 0)
+                    {
+                        auto owed = slePos->getFieldU64(sfTokensOwed1);
+                        auto const a = static_cast<std::uint64_t>(
+                            (clamm::uint256(posLiq) * clamm::uint256(d1)) >>
+                            clamm::Q96);
+                        owed = (owed <= UINT64_MAX - a) ? owed + a : UINT64_MAX;
+                        slePos->setFieldU64(sfTokensOwed1, owed);
+                    }
+                }
+
+                // Update snapshot unconditionally
+                slePos->setFieldH128(sfFeeGrowthInside0Last,
+                    clamm::toSLEField(fgi.feeGrowthInside0));
+                slePos->setFieldH128(sfFeeGrowthInside1Last,
+                    clamm::toSLEField(fgi.feeGrowthInside1));
+            }
 
             slePos->setAccountID(sfOwner, buyer);
             slePos->setFieldU64(sfOwnerNode, *buyerPage);

@@ -306,27 +306,11 @@ CLAMMSwap::doApply()
             clamm::toSLEField(swapResult.finalLiquidity));
     else
         sleClamm->makeFieldAbsent(sfLiquidityAmount);
-    if (swapResult.feeGrowthGlobal0 > 0)
-        sleClamm->setFieldH128(
-            sfFeeGrowthGlobal0,
-            clamm::toSLEField(swapResult.feeGrowthGlobal0));
-    else if (sleClamm->isFieldPresent(sfFeeGrowthGlobal0))
-        sleClamm->makeFieldAbsent(sfFeeGrowthGlobal0);
-    if (swapResult.feeGrowthGlobal1 > 0)
-        sleClamm->setFieldH128(
-            sfFeeGrowthGlobal1,
-            clamm::toSLEField(swapResult.feeGrowthGlobal1));
-    else if (sleClamm->isFieldPresent(sfFeeGrowthGlobal1))
-        sleClamm->makeFieldAbsent(sfFeeGrowthGlobal1);
-
-    // Update protocol fees tracking
-    if (totalFees > 0)
-    {
-        if (zeroForOne)
-            sleClamm->setFieldU64(sfProtocolFees0, protocolFees0 + totalFees);
-        else
-            sleClamm->setFieldU64(sfProtocolFees1, protocolFees1 + totalFees);
-    }
+    // Always set feeGrowthGlobal -- never make absent (modular counters)
+    sleClamm->setFieldH128(sfFeeGrowthGlobal0,
+        clamm::toSLEField(swapResult.feeGrowthGlobal0));
+    sleClamm->setFieldH128(sfFeeGrowthGlobal1,
+        clamm::toSLEField(swapResult.feeGrowthGlobal1));
 
     sleClamm->setFieldH256(sfPreviousTxnID, ctx_.tx.getTransactionID());
     sleClamm->setFieldU32(sfPreviousTxnLgrSeq, ctx_.view().seq());

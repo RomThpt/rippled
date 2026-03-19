@@ -300,7 +300,11 @@ getNextSqrtPriceFromAmount1RoundingDown(
     if (amount == 0 || liquidity == 0)
         return sqrtPrice;
     uint256 quotient = (uint256(amount) << Q96) / uint256(liquidity);
-    return static_cast<uint128>(uint256(sqrtPrice) + quotient);
+    uint256 sum = uint256(sqrtPrice) + quotient;
+    static uint256 const maxUint128 = (uint256(1) << 128) - 1;
+    if (sum > maxUint128)
+        return static_cast<uint128>(maxUint128);
+    return static_cast<uint128>(sum);
 }
 
 SwapStepResult

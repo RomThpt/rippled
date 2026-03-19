@@ -488,12 +488,20 @@ CLAMMDeposit::doApply()
             auto tokensOwed0 = sleExistingPos->getFieldU64(sfTokensOwed0);
             auto tokensOwed1 = sleExistingPos->getFieldU64(sfTokensOwed1);
 
-            tokensOwed0 += static_cast<std::uint64_t>(
-                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
-                clamm::Q96);
-            tokensOwed1 += static_cast<std::uint64_t>(
-                (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
-                clamm::Q96);
+            {
+                auto const a = static_cast<std::uint64_t>(
+                    (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta0)) >>
+                    clamm::Q96);
+                tokensOwed0 = (tokensOwed0 <= UINT64_MAX - a)
+                    ? tokensOwed0 + a : UINT64_MAX;
+            }
+            {
+                auto const a = static_cast<std::uint64_t>(
+                    (clamm::uint256(posLiquidity) * clamm::uint256(feeDelta1)) >>
+                    clamm::Q96);
+                tokensOwed1 = (tokensOwed1 <= UINT64_MAX - a)
+                    ? tokensOwed1 + a : UINT64_MAX;
+            }
 
             sleExistingPos->setFieldU64(sfTokensOwed0, tokensOwed0);
             sleExistingPos->setFieldU64(sfTokensOwed1, tokensOwed1);
@@ -504,18 +512,11 @@ CLAMMDeposit::doApply()
         sleExistingPos->setFieldH128(
             sfLiquidityAmount, clamm::toSLEField(newLiquidity));
 
-        if (feeGrowthInside.feeGrowthInside0 != 0)
-            sleExistingPos->setFieldH128(
-                sfFeeGrowthInside0Last,
-                clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-        else if (sleExistingPos->isFieldPresent(sfFeeGrowthInside0Last))
-            sleExistingPos->makeFieldAbsent(sfFeeGrowthInside0Last);
-        if (feeGrowthInside.feeGrowthInside1 != 0)
-            sleExistingPos->setFieldH128(
-                sfFeeGrowthInside1Last,
-                clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
-        else if (sleExistingPos->isFieldPresent(sfFeeGrowthInside1Last))
-            sleExistingPos->makeFieldAbsent(sfFeeGrowthInside1Last);
+        // Always update fee growth snapshot unconditionally
+        sleExistingPos->setFieldH128(sfFeeGrowthInside0Last,
+            clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
+        sleExistingPos->setFieldH128(sfFeeGrowthInside1Last,
+            clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
 
         sleExistingPos->setFieldH256(
             sfPreviousTxnID, ctx_.tx.getTransactionID());
@@ -591,15 +592,11 @@ CLAMMDeposit::doApply()
         slePos->setFieldI32(sfUpperTick, upperTick);
         slePos->setFieldH128(sfLiquidityAmount, clamm::toSLEField(liquidity));
 
-        // Snapshot proper feeGrowthInside (not just global)
-        if (feeGrowthInside.feeGrowthInside0 != 0)
-            slePos->setFieldH128(
-                sfFeeGrowthInside0Last,
-                clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-        if (feeGrowthInside.feeGrowthInside1 != 0)
-            slePos->setFieldH128(
-                sfFeeGrowthInside1Last,
-                clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
+        // Snapshot feeGrowthInside unconditionally
+        slePos->setFieldH128(sfFeeGrowthInside0Last,
+            clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
+        slePos->setFieldH128(sfFeeGrowthInside1Last,
+            clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
 
         auto page = sb.dirInsert(
             keylet::ownerDir(account),

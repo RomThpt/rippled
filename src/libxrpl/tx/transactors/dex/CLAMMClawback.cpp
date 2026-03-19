@@ -418,20 +418,11 @@ CLAMMClawback::applyGuts(Sandbox& sb)
                     feeGrowthGlobal0,
                     feeGrowthGlobal1);
 
-            if (feeGrowthInside.feeGrowthInside0 != 0)
-                slePos->setFieldH128(
-                    sfFeeGrowthInside0Last,
-                    clamm::toSLEField(
-                        feeGrowthInside.feeGrowthInside0));
-            else if (slePos->isFieldPresent(sfFeeGrowthInside0Last))
-                slePos->makeFieldAbsent(sfFeeGrowthInside0Last);
-            if (feeGrowthInside.feeGrowthInside1 != 0)
-                slePos->setFieldH128(
-                    sfFeeGrowthInside1Last,
-                    clamm::toSLEField(
-                        feeGrowthInside.feeGrowthInside1));
-            else if (slePos->isFieldPresent(sfFeeGrowthInside1Last))
-                slePos->makeFieldAbsent(sfFeeGrowthInside1Last);
+            // Always update snapshot unconditionally
+            slePos->setFieldH128(sfFeeGrowthInside0Last,
+                clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
+            slePos->setFieldH128(sfFeeGrowthInside1Last,
+                clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
 
             if (slePos->isFieldPresent(sfTokensOwed0))
                 slePos->makeFieldAbsent(sfTokensOwed0);
@@ -565,20 +556,11 @@ CLAMMClawback::applyGuts(Sandbox& sb)
                     feeGrowthGlobal0,
                     feeGrowthGlobal1);
 
-            if (feeGrowthInside.feeGrowthInside0 != 0)
-                slePos->setFieldH128(
-                    sfFeeGrowthInside0Last,
-                    clamm::toSLEField(
-                        feeGrowthInside.feeGrowthInside0));
-            else if (slePos->isFieldPresent(sfFeeGrowthInside0Last))
-                slePos->makeFieldAbsent(sfFeeGrowthInside0Last);
-            if (feeGrowthInside.feeGrowthInside1 != 0)
-                slePos->setFieldH128(
-                    sfFeeGrowthInside1Last,
-                    clamm::toSLEField(
-                        feeGrowthInside.feeGrowthInside1));
-            else if (slePos->isFieldPresent(sfFeeGrowthInside1Last))
-                slePos->makeFieldAbsent(sfFeeGrowthInside1Last);
+            // Always update snapshot unconditionally
+            slePos->setFieldH128(sfFeeGrowthInside0Last,
+                clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
+            slePos->setFieldH128(sfFeeGrowthInside1Last,
+                clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
 
             if (slePos->isFieldPresent(sfTokensOwed0))
                 slePos->makeFieldAbsent(sfTokensOwed0);
@@ -593,73 +575,51 @@ CLAMMClawback::applyGuts(Sandbox& sb)
         }
     }
 
-    // Transfer tokens from pool to holder
-    if (totalTransfer0 > 0)
+    // Transfer the issuer's asset directly from pool to issuer (clawback).
+    // The paired asset remains in the pool -- sending it to the holder
+    // would enrich the clawback target at other LPs' expense.
     {
-        auto const withdraw0 =
-            clamm::makeSTAmount(issue0, totalTransfer0);
-        auto const res = accountSend(
-            sb,
-            ammAccountID,
-            holder,
-            withdraw0,
-            j_,
-            WaiveTransferFee::Yes);
-        if (res != tesSUCCESS)
+        auto const issuerTransfer = issuerIsAsset0
+            ? totalTransfer0 : totalTransfer1;
+        if (issuerTransfer > 0)
         {
-            JLOG(j_.debug())
-                << "CLAMM Clawback: transfer token0 failed: "
-                << transHuman(res);
-            return res;
+            auto const issuerAmount = issuerIsAsset0
+                ? clamm::makeSTAmount(issue0, issuerTransfer)
+                : clamm::makeSTAmount(issue1, issuerTransfer);
+            auto const res = accountSend(
+                sb, ammAccountID, issuer, issuerAmount, j_,
+                WaiveTransferFee::Yes);
+            if (res != tesSUCCESS)
+            {
+                JLOG(j_.debug())
+                    << "CLAMM Clawback: transfer issuer asset failed: "
+                    << transHuman(res);
+                return res;
+            }
         }
     }
 
-    if (totalTransfer1 > 0)
-    {
-        auto const withdraw1 =
-            clamm::makeSTAmount(issue1, totalTransfer1);
-        auto const res = accountSend(
-            sb,
-            ammAccountID,
-            holder,
-            withdraw1,
-            j_,
-            WaiveTransferFee::Yes);
-        if (res != tesSUCCESS)
-        {
-            JLOG(j_.debug())
-                << "CLAMM Clawback: transfer token1 failed: "
-                << transHuman(res);
-            return res;
-        }
-    }
-
-    // Claw back the issuer's asset from holder
-    {
-        auto const issuerTotal = issuerIsAsset0
-            ? clamm::makeSTAmount(issue0, totalTransfer0)
-            : clamm::makeSTAmount(issue1, totalTransfer1);
-        if (issuerTotal > beast::zero)
-        {
-            auto const ter =
-                rippleCredit(sb, holder, issuer, issuerTotal, true, j_);
-            if (ter != tesSUCCESS)
-                return ter;
-        }
-    }
-
-    // If tfClawTwoAssets: claw back paired asset too
+    // If tfClawTwoAssets: also send paired asset from pool to issuer.
+    // Otherwise the paired asset stays in the pool.
     if (ctx_.tx.getFlags() & tfClawTwoAssets)
     {
-        auto const pairedTotal = issuerIsAsset0
-            ? clamm::makeSTAmount(issue1, totalTransfer1)
-            : clamm::makeSTAmount(issue0, totalTransfer0);
-        if (pairedTotal > beast::zero)
+        auto const pairedTransfer = issuerIsAsset0
+            ? totalTransfer1 : totalTransfer0;
+        if (pairedTransfer > 0)
         {
-            auto const ter =
-                rippleCredit(sb, holder, issuer, pairedTotal, true, j_);
-            if (ter != tesSUCCESS)
-                return ter;
+            auto const pairedAmount = issuerIsAsset0
+                ? clamm::makeSTAmount(issue1, pairedTransfer)
+                : clamm::makeSTAmount(issue0, pairedTransfer);
+            auto const res = accountSend(
+                sb, ammAccountID, issuer, pairedAmount, j_,
+                WaiveTransferFee::Yes);
+            if (res != tesSUCCESS)
+            {
+                JLOG(j_.debug())
+                    << "CLAMM Clawback: transfer paired asset failed: "
+                    << transHuman(res);
+                return res;
+            }
         }
     }
 

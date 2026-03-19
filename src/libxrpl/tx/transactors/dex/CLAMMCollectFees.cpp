@@ -128,13 +128,19 @@ CLAMMCollectFees::doApply()
         auto const delta1 = feeGrowthInside.feeGrowthInside1 - fgi1Last;
 
         if (delta0 > 0)
-            fees0 += static_cast<std::uint64_t>(
+        {
+            auto const a = static_cast<std::uint64_t>(
                 (clamm::uint256(posLiquidity) * clamm::uint256(delta0)) >>
                 clamm::Q96);
+            fees0 = (fees0 <= UINT64_MAX - a) ? fees0 + a : UINT64_MAX;
+        }
         if (delta1 > 0)
-            fees1 += static_cast<std::uint64_t>(
+        {
+            auto const a = static_cast<std::uint64_t>(
                 (clamm::uint256(posLiquidity) * clamm::uint256(delta1)) >>
                 clamm::Q96);
+            fees1 = (fees1 <= UINT64_MAX - a) ? fees1 + a : UINT64_MAX;
+        }
     }
 
     // Apply MaxAmount/MaxAmount2 capping
@@ -186,15 +192,11 @@ CLAMMCollectFees::doApply()
         }
     }
 
-    // Update position: snapshot fee growth, clear tokensOwed
-    if (feeGrowthInside.feeGrowthInside0 > 0)
-        slePos->setFieldH128(
-            sfFeeGrowthInside0Last,
-            clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
-    if (feeGrowthInside.feeGrowthInside1 > 0)
-        slePos->setFieldH128(
-            sfFeeGrowthInside1Last,
-            clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
+    // Update position: snapshot fee growth unconditionally, clear tokensOwed
+    slePos->setFieldH128(sfFeeGrowthInside0Last,
+        clamm::toSLEField(feeGrowthInside.feeGrowthInside0));
+    slePos->setFieldH128(sfFeeGrowthInside1Last,
+        clamm::toSLEField(feeGrowthInside.feeGrowthInside1));
 
     // If MaxAmount capped the withdrawal, store remaining as tokensOwed
     {

@@ -53,7 +53,12 @@ CLAMMOffer<TIn, TOut>::consume(
     auto const clammKeylet = keylet::clamm(pool_.poolID);
     auto sleClamm = view.peek(clammKeylet);
     if (!sleClamm)
+    {
+        // Pool disappeared -- zero amounts so caller does not credit
+        // tokens that were never swapped.
+        amounts_ = TAmounts<TIn, TOut>{};
         return;
+    }
 
     // Read fresh pool state from the SLE (may have been modified by
     // earlier steps in the same payment path).
@@ -96,33 +101,11 @@ CLAMMOffer<TIn, TOut>::consume(
             clamm::toSLEField(result.finalLiquidity));
     else
         sleClamm->makeFieldAbsent(sfLiquidityAmount);
-    if (result.feeGrowthGlobal0 > 0)
-        sleClamm->setFieldH128(
-            sfFeeGrowthGlobal0,
-            clamm::toSLEField(result.feeGrowthGlobal0));
-    else if (sleClamm->isFieldPresent(sfFeeGrowthGlobal0))
-        sleClamm->makeFieldAbsent(sfFeeGrowthGlobal0);
-    if (result.feeGrowthGlobal1 > 0)
-        sleClamm->setFieldH128(
-            sfFeeGrowthGlobal1,
-            clamm::toSLEField(result.feeGrowthGlobal1));
-    else if (sleClamm->isFieldPresent(sfFeeGrowthGlobal1))
-        sleClamm->makeFieldAbsent(sfFeeGrowthGlobal1);
-
-    // Track protocol fees
-    if (result.totalFees > 0)
-    {
-        if (pool_.zeroForOne)
-        {
-            auto fees = sleClamm->getFieldU64(sfProtocolFees0);
-            sleClamm->setFieldU64(sfProtocolFees0, fees + result.totalFees);
-        }
-        else
-        {
-            auto fees = sleClamm->getFieldU64(sfProtocolFees1);
-            sleClamm->setFieldU64(sfProtocolFees1, fees + result.totalFees);
-        }
-    }
+    // Always set feeGrowthGlobal -- never make absent (modular counters)
+    sleClamm->setFieldH128(sfFeeGrowthGlobal0,
+        clamm::toSLEField(result.feeGrowthGlobal0));
+    sleClamm->setFieldH128(sfFeeGrowthGlobal1,
+        clamm::toSLEField(result.feeGrowthGlobal1));
 
     view.update(sleClamm);
 }
