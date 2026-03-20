@@ -112,7 +112,9 @@ public:
     static std::pair<std::uint32_t, std::uint32_t>
     adjustRates(std::uint32_t ofrInRate, std::uint32_t /*ofrOutRate*/)
     {
-        // CLAMM doesn't pay transfer fee on output (like AMM)
+        // CLAMM doesn't pay transfer fee on output, matching XLS-30 AMM
+        // behavior (AMMOffer::adjustRates). Pool-held assets are not subject
+        // to issuer transfer fees on outbound transfers during payment routing.
         return {ofrInRate, QUALITY_ONE};
     }
 

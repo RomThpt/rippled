@@ -163,6 +163,16 @@ CLAMMCreate::doApply()
         auto const q192 = clamm::uint256(1) << 192;
         initialSqrtPrice = static_cast<clamm::uint128>(
             q192 / clamm::uint256(initialSqrtPrice));
+
+        // Re-validate after inversion: the inverted price must still
+        // fall within [minSqrtRatio, maxSqrtRatio).
+        if (initialSqrtPrice < clamm::minSqrtRatio() ||
+            initialSqrtPrice >= clamm::maxSqrtRatio())
+        {
+            JLOG(j_.warn())
+                << "CLAMM Create: inverted sqrt price out of valid range.";
+            return tecINTERNAL;
+        }
     }
 
     auto const initialTick = clamm::sqrtPriceToTick(initialSqrtPrice);

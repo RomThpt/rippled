@@ -312,8 +312,12 @@ CLAMMBid::doApply()
             }
         }
 
-        // Remainder goes to pool (benefits all LPs)
-        auto const toPool = payPrice - refund;
+        // Remainder goes to pool (benefits all LPs).
+        // Clamp to zero: refund can exceed payPrice when the previous
+        // holder's original payment was larger than the current bid.
+        auto const toPool = payPrice > refund
+            ? payPrice - refund
+            : STAmount(payPrice.issue(), 0);
         if (toPool > beast::zero)
         {
             auto const res = accountSend(

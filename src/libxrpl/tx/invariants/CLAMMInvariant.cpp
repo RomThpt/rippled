@@ -112,7 +112,24 @@ ValidCLAMM::visitEntry(
             {
                 clammPositionBadBounds_ = true;
             }
+
+            // Verify tick spacing alignment (M15)
+            if (clammTickSpacing_)
+            {
+                if (!isValidCLAMMTick(lower, *clammTickSpacing_) ||
+                    !isValidCLAMMTick(upper, *clammTickSpacing_))
+                {
+                    clammPositionBadBounds_ = true;
+                }
+            }
         }
+    }
+
+    // Track tick bitmap mutations (M14)
+    if (typeAfter == ltCLAMM_TICK_BITMAP ||
+        typeBefore == ltCLAMM_TICK_BITMAP)
+    {
+        clammTickBitmapChanged_ = true;
     }
 }
 

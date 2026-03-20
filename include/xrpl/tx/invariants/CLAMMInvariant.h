@@ -35,6 +35,7 @@ class ValidCLAMM
     bool clammPositionBadBounds_{false};
     bool clammTickLiquidityZero_{false};
     bool clammSqrtPriceTickMismatch_{false};
+    bool clammTickBitmapChanged_{false};
 
 public:
     void
